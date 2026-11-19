@@ -1,0 +1,14 @@
+{
+  "name": "ergana",
+  "description": "Ergana's Claude Code plugin: your company's decision catalogue in Claude Code.",
+  "owner": {
+    "name": "Ergana"
+  },
+  "plugins": [
+    {
+      "name": "ergana",
+      "source": "./plugins/ergana",
+      "description": "The rules before each edit, a rules check before the agent says it is done, and /ergana:add-decision to write, try and record a decision."
+    }
+  ]
+}

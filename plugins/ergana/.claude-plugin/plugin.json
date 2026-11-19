@@ -1,0 +1,10 @@
+{
+  "name": "ergana",
+  "displayName": "Ergana",
+  "version": "0.4.0",
+  "description": "Your company's decision catalogue in Claude Code: the rules before each edit, a rules check before the agent says it is done, and /ergana:add-decision to write, try and record a decision.",
+  "author": {
+    "name": "Ergana"
+  },
+  "homepage": "https://ergana.ai"
+}

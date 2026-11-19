@@ -1,0 +1,53 @@
+{
+  "description": "Ergana: the session id at session start, the rules in scope before each edit, the done gate on stop, and the check agent kept read-only.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/session-context.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "before_edit",
+            "input": { "session_id": "${session_id}", "agent_type": "${agent_type}" },
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/check-readonly.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "check_done",
+            "input": { "session_id": "${session_id}" },
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

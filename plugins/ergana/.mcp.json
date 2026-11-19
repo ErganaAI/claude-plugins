@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ergana": {
+      "type": "http",
+      "url": "https://app.ergana.ai/mcp"
+    }
+  }
+}
