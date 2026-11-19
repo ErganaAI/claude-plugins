@@ -1,5 +1,5 @@
 {
-  "description": "Ergana: the session id at session start, the rules in scope before each edit, the done gate on stop, and the check agent kept read-only.",
+  "description": "Ergana: the session id at session start, the rules in scope before each edit, the done gate on stop, the session's live state (working or waiting for you), and the check agent kept read-only.",
   "hooks": {
     "SessionStart": [
       {
@@ -20,7 +20,11 @@
             "type": "mcp_tool",
             "server": "plugin:ergana:ergana",
             "tool": "before_edit",
-            "input": { "session_id": "${session_id}", "agent_type": "${agent_type}" },
+            "input": {
+              "session_id": "${session_id}",
+              "agent_type": "${agent_type}",
+              "cwd": "${cwd}"
+            },
             "timeout": 30
           }
         ]
@@ -34,6 +38,22 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "session_state",
+            "input": {
+              "session_id": "${session_id}",
+              "state": "waiting",
+              "cwd": "${cwd}"
+            },
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
@@ -43,8 +63,64 @@
             "type": "mcp_tool",
             "server": "plugin:ergana:ergana",
             "tool": "check_done",
-            "input": { "session_id": "${session_id}" },
+            "input": {
+              "session_id": "${session_id}",
+              "cwd": "${cwd}"
+            },
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "session_state",
+            "input": {
+              "session_id": "${session_id}",
+              "state": "working",
+              "cwd": "${cwd}"
+            },
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "session_state",
+            "input": {
+              "session_id": "${session_id}",
+              "state": "waiting",
+              "cwd": "${cwd}"
+            },
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:ergana:ergana",
+            "tool": "session_state",
+            "input": {
+              "session_id": "${session_id}",
+              "state": "working",
+              "cwd": "${cwd}"
+            },
+            "timeout": 10
           }
         ]
       }
