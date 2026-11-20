@@ -1,6 +1,9 @@
 #!/bin/sh
 # The MCP server's headersHelper: the session's repository and git branch as X-Ergana-Repo and
-# X-Ergana-Branch, so the Sessions page names them without the agent reporting them. A hook cannot
+# X-Ergana-Branch, so the Sessions page names them without the agent reporting them, and the sha256
+# of the checkout's root folder as X-Ergana-Root-Hash, so Ergana finds the root among an edited
+# file's folders and knows which part of the repository (which area) the file is in. The root, a
+# local path, is never sent. A hook cannot
 # hand a command's output to an mcp_tool hook; a headersHelper runs at each MCP connection (session
 # start, reconnect), so the branch is the one at connection time.
 # Silent on any failure (not a git repository, no origin, git missing, over a second): it prints
@@ -50,8 +53,21 @@ branch=$(git_ branch --show-current)
 printf '%s' "$branch" | LC_ALL=C grep -Eq '^[ -~]+$' && ! printf '%s' "$branch" | grep -q '["\\]' ||
   branch=
 
+# The root's sha256 (git prints it with forward slashes, C:/... on Windows), or nothing.
+top=$(git_ rev-parse --show-toplevel)
+hash=
+if [ -n "$top" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$top" | sha256sum 2>/dev/null | cut -c1-64)
+  elif command -v shasum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$top" | shasum -a 256 2>/dev/null | cut -c1-64)
+  fi
+  printf '%s' "$hash" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || hash=
+fi
+
 out=
 [ -n "$repo" ] && out="\"X-Ergana-Repo\":\"$repo\""
 [ -n "$branch" ] && out="${out:+$out,}\"X-Ergana-Branch\":\"$branch\""
+[ -n "$hash" ] && out="${out:+$out,}\"X-Ergana-Root-Hash\":\"$hash\""
 printf '{%s}\n' "$out"
 exit 0
