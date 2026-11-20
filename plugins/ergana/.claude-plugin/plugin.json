@@ -1,7 +1,7 @@
 {
   "name": "ergana",
   "displayName": "Ergana",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "Your company's decision catalogue in Claude Code: the rules before each edit, a rules check before the agent says it is done, /ergana:add-decision to write, try and record a decision, and /ergana:review for an independent review before a change lands.",
   "author": {
     "name": "Ergana"
