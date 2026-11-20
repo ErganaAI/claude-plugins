@@ -1,5 +1,5 @@
 {
-  "description": "Ergana: the session id at session start, the rules in scope before each edit, the done gate on stop, the session's live state (working or waiting for you), and the check agent kept read-only.",
+  "description": "Ergana: the session id at session start, the rules in scope before each edit, the done gate on stop, the session's live state (working or waiting for you) and its name, and the check agent kept read-only.",
   "hooks": {
     "SessionStart": [
       {
@@ -24,7 +24,7 @@
               "session_id": "${session_id}",
               "agent_type": "${agent_type}",
               "cwd": "${cwd}",
-              "plugin_version": "0.6.3"
+              "plugin_version": "0.8.0"
             },
             "timeout": 30
           }
@@ -51,7 +51,7 @@
               "session_id": "${session_id}",
               "state": "waiting",
               "cwd": "${cwd}",
-              "plugin_version": "0.6.3"
+              "plugin_version": "0.8.0"
             },
             "timeout": 10
           }
@@ -69,7 +69,7 @@
               "session_id": "${session_id}",
               "cwd": "${cwd}",
               "background_tasks": "${background_tasks}",
-              "plugin_version": "0.6.3"
+              "plugin_version": "0.8.0"
             },
             "timeout": 30
           }
@@ -88,7 +88,7 @@
               "session_id": "${session_id}",
               "state": "working",
               "cwd": "${cwd}",
-              "plugin_version": "0.6.3"
+              "plugin_version": "0.8.0"
             },
             "timeout": 10
           }
@@ -107,7 +107,7 @@
               "session_id": "${session_id}",
               "state": "waiting",
               "cwd": "${cwd}",
-              "plugin_version": "0.6.3"
+              "plugin_version": "0.8.0"
             },
             "timeout": 10
           }
@@ -118,6 +118,11 @@
       {
         "hooks": [
           {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/session-name.sh",
+            "timeout": 10
+          },
+          {
             "type": "mcp_tool",
             "server": "plugin:ergana:ergana",
             "tool": "session_state",
@@ -125,7 +130,8 @@
               "session_id": "${session_id}",
               "state": "working",
               "cwd": "${cwd}",
-              "plugin_version": "0.6.3"
+              "name": "${session_title}",
+              "plugin_version": "0.8.0"
             },
             "timeout": 10
           }
