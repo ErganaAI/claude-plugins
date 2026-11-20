@@ -44,7 +44,10 @@ too.
 ## What a session sends
 
 Besides the tool calls, each connection to Ergana carries the session folder's origin remote (any user name or token
-stripped; a local path is never sent) and its git branch at connection time, so the Sessions page names them.
+stripped; a local path is never sent) and its git branch at connection time, so the Sessions page names them, and a
+hash of the checkout's root folder (its sha256, never the folder itself). Before each edit, the hook sends the edited
+file's path: with the root's hash, Ergana finds which part of the repository the file is in and serves that part's
+rules. Ergana stores nothing of either path.
 
 ## Tests
 

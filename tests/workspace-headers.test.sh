@@ -13,12 +13,23 @@ expect() {
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got $2, want $3"; failed=1; fi
 }
 
-# check <name> <origin, or - for none> <want>
+# rooted <repository folder> <json>: the json with the root's hash added, as the helper sends it.
+rooted() {
+  top=$(git -C "$1" rev-parse --show-toplevel)
+  if command -v sha256sum >/dev/null 2>&1; then
+    h=$(printf '%s' "$top" | sha256sum | cut -c1-64)
+  else
+    h=$(printf '%s' "$top" | shasum -a 256 | cut -c1-64)
+  fi
+  printf '%s,"X-Ergana-Root-Hash":"%s"}' "${2%\}}" "$h"
+}
+
+# check <name> <origin, or - for none> <want, without the root's hash>
 check() {
   repo="$tmp/$1"
   git init -q -b main "$repo"
   [ "$2" = - ] || git --git-dir="$repo/.git" remote add origin "$2"
-  expect "$1" "$("$helper" "$repo")" "$3"
+  expect "$1" "$("$helper" "$repo")" "$(rooted "$repo" "$3")"
 }
 
 check https-token 'https://x-access-token:abc123@github.com/acme/web.git' \
@@ -47,7 +58,15 @@ git --git-dir="$tmp/detached/.git" remote add origin 'git@github.com:acme/api.gi
 git --git-dir="$tmp/detached/.git" -c user.name=t -c user.email=t@t \
   commit-tree -m one "$(git --git-dir="$tmp/detached/.git" mktree </dev/null)" >"$tmp/sha"
 git --git-dir="$tmp/detached/.git" update-ref --no-deref HEAD "$(cat "$tmp/sha")"
-expect detached "$("$helper" "$tmp/detached")" '{"X-Ergana-Repo":"git@github.com:acme/api.git"}'
+expect detached "$("$helper" "$tmp/detached")" \
+  "$(rooted "$tmp/detached" '{"X-Ergana-Repo":"git@github.com:acme/api.git"}')"
+
+# A subfolder of the checkout sends the root's hash, not the subfolder's; the hash is never the
+# path itself.
+mkdir -p "$tmp/https-plain/apps/admin"
+sub=$("$helper" "$tmp/https-plain/apps/admin")
+expect subfolder "$sub" "$(rooted "$tmp/https-plain" '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}')"
+case "$sub" in *"$tmp"*) expect no-local-path leaked none ;; *) expect no-local-path none none ;; esac
 
 # A folder outside git sends nothing; an unexpanded ${CLAUDE_PROJECT_DIR} falls back to the
 # variable, then to the working folder.
