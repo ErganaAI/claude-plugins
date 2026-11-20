@@ -23,7 +23,8 @@
             "input": {
               "session_id": "${session_id}",
               "agent_type": "${agent_type}",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 30
           }
@@ -49,7 +50,8 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 10
           }
@@ -65,7 +67,8 @@
             "tool": "check_done",
             "input": {
               "session_id": "${session_id}",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 30
           }
@@ -83,7 +86,8 @@
             "input": {
               "session_id": "${session_id}",
               "state": "working",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 10
           }
@@ -101,7 +105,8 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 10
           }
@@ -118,7 +123,8 @@
             "input": {
               "session_id": "${session_id}",
               "state": "working",
-              "cwd": "${cwd}"
+              "cwd": "${cwd}",
+              "plugin_version": "0.6.2"
             },
             "timeout": 10
           }
