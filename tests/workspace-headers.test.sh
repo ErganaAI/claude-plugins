@@ -31,6 +31,11 @@ check scp 'git@github.com:acme/api.git' \
   '{"X-Ergana-Repo":"git@github.com:acme/api.git","X-Ergana-Branch":"main"}'
 check ssh-url 'ssh://git:secret@github.com:22/acme/api.git' \
   '{"X-Ergana-Repo":"ssh://github.com:22/acme/api.git","X-Ergana-Branch":"main"}'
+check password-at 'https://user:p@ss@github.com/acme/web.git' \
+  '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}'
+check password-slash 'https://user:pa/ss@github.com/acme/web.git' '{"X-Ergana-Branch":"main"}'
+check ssh-password-at 'ssh://git:a@b@github.com/acme/api.git' \
+  '{"X-Ergana-Repo":"ssh://github.com/acme/api.git","X-Ergana-Branch":"main"}'
 check file-path '/srv/git/web.git' '{"X-Ergana-Branch":"main"}'
 check file-url 'file:///srv/git/web.git' '{"X-Ergana-Branch":"main"}'
 check ext 'ext::sh -c touch% /tmp/pwned' '{"X-Ergana-Branch":"main"}'

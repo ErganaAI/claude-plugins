@@ -28,9 +28,11 @@ remote() {
     http://* | https://* | ssh://*)
       scheme=${url%%://*}
       rest=${url#*://}
-      hostpath=${rest#*@}
-      # An @ after the first / belongs to the path, not to userinfo.
-      case "${rest%%/*}" in *@*) rest=$hostpath ;; esac
+      # Userinfo ends at the authority's last @ (a password may hold an @).
+      auth=${rest%%/*}
+      rest=${auth##*@}${rest#"$auth"}
+      # An @ left anywhere is a credential cut wrong (a password holding a /): send nothing.
+      case "$rest" in *@*) return 0 ;; esac
       case "$rest" in */?*) printf '%s://%s' "$scheme" "$rest" ;; esac
       ;;
     *://* | *::*) ;;
