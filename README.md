@@ -40,3 +40,14 @@ claude plugin marketplace update ergana && claude plugin update ergana@ergana
 Then `/reload-plugins` in a running session. If `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES` or
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, auto-update stays off unless `FORCE_AUTOUPDATE_PLUGINS=1` is set
 too.
+
+## What a session sends
+
+Besides the tool calls, each connection to Ergana carries the session folder's origin remote (any user name or token
+stripped; a local path is never sent) and its git branch at connection time, so the Sessions page names them.
+
+## Tests
+
+```
+sh tests/workspace-headers.test.sh
+```
