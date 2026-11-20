@@ -2,7 +2,8 @@
   "mcpServers": {
     "ergana": {
       "type": "http",
-      "url": "https://app.ergana.ai/mcp"
+      "url": "https://app.ergana.ai/mcp",
+      "headersHelper": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/workspace-headers.sh \"${CLAUDE_PROJECT_DIR}\""
     }
   }
 }
