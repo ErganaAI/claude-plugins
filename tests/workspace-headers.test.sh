@@ -73,4 +73,70 @@ case "$sub" in *"$tmp"*) expect no-local-path leaked none ;; *) expect no-local-
 mkdir "$tmp/plain"
 expect not-git "$("$helper" "$tmp/plain")" '{}'
 expect unexpanded "$(cd "$tmp/plain" && CLAUDE_PROJECT_DIR='' "$helper" '${CLAUDE_PROJECT_DIR}')" '{}'
+
+# .ergana (DR-0035.D1): the workspace header, the language, and the refusal when the file is bad.
+# has <name> <json> <fragment>, hasnt <name> <json> <fragment>; valid <name> <json>
+has() { case "$2" in *"$3"*) echo "ok   $1" ;; *) echo "FAIL $1: $2 lacks $3"; failed=1 ;; esac; }
+hasnt() { case "$2" in *"$3"*) echo "FAIL $1: $2 holds $3"; failed=1 ;; *) echo "ok   $1" ;; esac; }
+valid() {
+  if printf '%s' "$2" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then echo "ok   $1 json"; else echo "FAIL $1: invalid json $2"; failed=1; fi
+}
+# A PATH with the tools the helper needs but no git.
+nogit="$tmp/nogit"
+mkdir "$nogit"
+for t in sh sed grep head cut tr cat dirname basename sha256sum shasum perl; do
+  p=$(command -v "$t") && [ -x "$p" ] && ln -s "$p" "$nogit/$t"
+done
+
+mk() { git init -q -b main "$1" && (cd "$1" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init); }
+
+mk "$tmp/ws1"
+printf 'workspace = john\n' >"$tmp/ws1/.ergana"
+out=$("$helper" "$tmp/ws1")
+has ergana-root "$out" '"X-Ergana-Workspace":"john"'
+valid ergana-root "$out"
+
+mk "$tmp/main2"
+printf '# the workspace\n  workspace=john  \n' >"$tmp/main2/.ergana"
+(cd "$tmp/main2" && git worktree add -q "$tmp/wt2" -b wt2)
+out=$("$helper" "$tmp/wt2")
+has linked-main "$out" '"X-Ergana-Workspace":"john"'
+valid linked-main "$out"
+out=$(PATH="$nogit" "$helper" "$tmp/wt2")
+has linked-main-no-git "$out" '"X-Ergana-Workspace":"john"'
+valid linked-main-no-git "$out"
+
+printf 'workspace = other\n' >"$tmp/wt2/.ergana"
+out=$("$helper" "$tmp/wt2")
+has linked-own "$out" '"X-Ergana-Workspace":"other"'
+hasnt linked-own "$out" '"john"'
+
+for bad in 'Ergana' 'a/b' 'x"y' 'ab' ''; do
+  printf 'workspace = %s\n' "$bad" >"$tmp/ws1/.ergana"
+  out=$("$helper" "$tmp/ws1")
+  hasnt "malformed[$bad]" "$out" 'X-Ergana-Workspace'
+  has "malformed[$bad]" "$out" '"Authorization":"Bearer ergana-not-connected"'
+  valid "malformed[$bad]" "$out"
+done
+printf 'nothing here\n' >"$tmp/ws1/.ergana"
+out=$("$helper" "$tmp/ws1")
+has no-line "$out" '"Authorization":"Bearer ergana-not-connected"'
+
+out=$("$helper" "$tmp/https-plain")
+hasnt no-ergana "$out" 'Ergana-Workspace'
+hasnt no-ergana "$out" 'Authorization'
+hasnt no-ergana "$out" 'Accept-Language'
+
+mkdir "$tmp/plainws"
+printf 'workspace = john\n' >"$tmp/plainws/.ergana"
+out=$(PATH="$nogit" "$helper" "$tmp/plainws")
+has no-git-root "$out" '"X-Ergana-Workspace":"john"'
+valid no-git-root "$out"
+
+printf 'workspace = john\n' >"$tmp/ws1/.ergana"
+for l in fr_FR.UTF-8:fr en_US.UTF-8:en :en 'x"y:en'; do
+  out=$(LANG=${l%:*} "$helper" "$tmp/ws1")
+  has "lang[${l%:*}]" "$out" "\"Accept-Language\":\"${l##*:}\""
+  valid "lang[${l%:*}]" "$out"
+done
 exit $failed
