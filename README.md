@@ -57,10 +57,19 @@ fingerprint at the session's start is kept in the plugin's data folder (`${CLAUD
 removed after 30 days), so a session that never changed the repository finishes without a check. Only the hashes leave
 the machine.
 
+A Stop hook (`scripts/stop.sh`) compares the fingerprint of the git checkout holding the session's folder with the
+session's start and with the last one a passing check cleared (`${CLAUDE_PLUGIN_DATA}/cleared/<session id>`, written by
+`scripts/cleared.sh` when `check_done` or `record_check` answers `through: true`). When it differs, the stop is refused
+once per fingerprint and the agent's `check_done` decides. A folder that is no git checkout, or has no commit, is not
+gated. Shell commands are no longer sent to Ergana's `before_edit`: the fingerprint sees what they changed.
+
 ## Tests
 
 ```
 sh tests/workspace-headers.test.sh
 sh tests/session-context.test.sh
 sh tests/fingerprint.test.sh
+sh tests/stop.test.sh
+sh tests/cleared.test.sh
+sh tests/ergana-tools.test.sh
 ```

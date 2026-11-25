@@ -6,7 +6,9 @@
 #   carries the repository's fingerprint (fingerprint.sh) and the one the session started with
 #   (session-context.sh), computed here; the server lets the next stop through when the
 #   repository is as its last passing check, or with no check its start, left it;
-# - begin_check and record_check are for the ergana:check subagent only;
+# - begin_check and record_check are for the ergana:check subagent only; each keeps the fingerprint
+#   it carries (sent/<session>.<tool>) for cleared.sh, and record_check is denied when the repository
+#   moved since begin_check; check_done also says whether the repository has an origin remote;
 # - session_id is this session's, from the hook input, whatever the agent typed;
 # - record_check's base_sha and diff_sha256 are computed here: the base is
 #   `git merge-base HEAD origin/HEAD` (else HEAD), the hash the repository's fingerprint, so a
@@ -71,7 +73,7 @@ esac
 
 # Every key this script sets is removed, then written first.
 strip() {
-  sed -E 's/,"'"$1"'":("([^"\\]|\\.)*"|null)//; s/^\{"'"$1"'":("([^"\\]|\\.)*"|null),?/{/'
+  sed -E 's/,"'"$1"'":("([^"\\]|\\.)*"|null|true|false)//; s/^\{"'"$1"'":("([^"\\]|\\.)*"|null|true|false),?/{/'
 }
 new=$(printf '%s' "$args" | strip session_id)
 hex64() { printf '%s' "$1" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$'; }
@@ -80,10 +82,27 @@ if [ "$tool" = record_check ] || [ "$tool" = check_done ]; then
   cwd=$(printf '%s' "$outer" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
   [ -n "$cwd" ] && cd "$cwd" 2>/dev/null || fail "no working folder"
 fi
+# The fingerprint this call carries is kept (sent/<session>.<tool>): cleared.sh turns it into the
+# session's cleared fingerprint when the server answers through:true, and record_check compares
+# it with the one begin_check sent.
+sent() {
+  [ -n "${CLAUDE_PLUGIN_DATA:-}" ] && mkdir -p "$CLAUDE_PLUGIN_DATA/sent" 2>/dev/null &&
+    printf '%s\n' "$1" >"$CLAUDE_PLUGIN_DATA/sent/$session.$tool"
+}
+if [ "$tool" = begin_check ]; then
+  cwd=$(printf '%s' "$outer" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
+  if [ -n "$cwd" ] && cd "$cwd" 2>/dev/null; then
+    sum=$("$here/fingerprint.sh" .) && hex64 "$sum" && sent "$sum"
+  fi
+fi
 if [ "$tool" = record_check ]; then
   base=$(git merge-base HEAD origin/HEAD 2>/dev/null || git rev-parse HEAD 2>/dev/null) ||
     fail "no git repository"
   sum=$("$here/fingerprint.sh" .) && hex64 "$sum" || fail "no diff hash"
+  begun=$(cat "${CLAUDE_PLUGIN_DATA:-/nonexistent}/sent/$session.begin_check" 2>/dev/null)
+  [ -z "$begun" ] || [ "$begun" = "$sum" ] ||
+    deny "The repository changed while the check ran: call begin_check again and judge the new diff."
+  sent "$sum"
   new=$(printf '%s' "$new" | strip diff_sha256 | strip base_sha)
   new=$(printf '%s' "$new" | sed 's/^{/{"diff_sha256":"'"$sum"'","base_sha":"'"$base"'",/')
 fi
@@ -91,10 +110,12 @@ if [ "$tool" = check_done ]; then
   # Only the fingerprints written here reach the server: the agent's are dropped, and a
   # repository the script cannot read is "unknown", which asks for the check.
   sum=$("$here/fingerprint.sh" .) && hex64 "$sum" || sum=unknown
+  [ "$sum" = unknown ] || sent "$sum"
   start=$(cat "${CLAUDE_PLUGIN_DATA:-/nonexistent}/start/$session" 2>/dev/null)
   hex64 "$start" && start=',"start_fingerprint":"'"$start"'"' || start=
-  new=$(printf '%s' "$new" | strip fingerprint | strip start_fingerprint)
-  new=$(printf '%s' "$new" | sed 's/^{/{"fingerprint":"'"$sum"'"'"$start"',/')
+  if git remote get-url origin >/dev/null 2>&1; then origin=true; else origin=false; fi
+  new=$(printf '%s' "$new" | strip fingerprint | strip start_fingerprint | strip origin)
+  new=$(printf '%s' "$new" | sed 's/^{/{"fingerprint":"'"$sum"'"'"$start"',"origin":'"$origin"',/')
 fi
 new=$(printf '%s' "$new" | sed 's/^{/{"session_id":"'"$session"'",/; s/,}$/}/')
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":%s}}\n' "$new"
