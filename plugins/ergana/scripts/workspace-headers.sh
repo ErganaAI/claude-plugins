@@ -7,23 +7,31 @@
 # else in the main checkout of a linked worktree (read without git from .git and commondir, then
 # with git), adds X-Ergana-Workspace and Accept-Language (fr when LANG starts with fr, else en); a
 # .ergana that is unreadable or malformed adds "Authorization: Bearer ergana-not-connected" instead,
-# never a silent fall back to the shared sign-in. Without .ergana the output is unchanged. A hook cannot
+# never a silent fall back to the shared sign-in. A valid .ergana adds "Authorization: Bearer <token>" with
+# the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
+# stops a helper at 10 s), or ergana-not-connected when there is none, when the budget is spent, or when
+# DR-0037.D1 wants a confirmation not given yet (2+ connected workspaces and a .ergana git tracks whose
+# sha256 is not in ~/.config/ergana/trusted). Without .ergana the output is unchanged. A hook cannot
 # hand a command's output to an mcp_tool hook; a headersHelper runs at each MCP connection (session
 # start, reconnect), so the branch is the one at connection time.
 # Silent on any failure (not a git repository, no origin, git missing, over a second): it prints
 # at least {} and exits 0, so the connection never fails on it. Never a credential: userinfo is
 # stripped from an https or ssh:// URL, and anything but an http(s), ssh:// or scp-style git URL
 # (a file path, file://, ext::) is not sent.
+t0=$(date +%s 2>/dev/null)
 dir=${1:-}
 case "$dir" in '' | *'${'*) dir=${CLAUDE_PROJECT_DIR:-$PWD} ;; esac
+here=$(cd "$(dirname "$0")" && pwd)
+# git_ (each call cut off after about a second), the .ergana lookup and the confirmation check.
+. "$here/ergana-repo.sh"
 
-# git, cut off after about a second when perl is there to time it.
-git_() {
-  if command -v perl >/dev/null 2>&1; then
-    perl -e 'alarm 1; exec @ARGV or exit 1' git -C "$dir" "$@" 2>/dev/null
-  else
-    git -C "$dir" "$@" 2>/dev/null
-  fi
+# budget_left: $left, the whole seconds left of the 8 s (the clock counts whole seconds: one is held back), 0
+# when there is no clock.
+budget_left() {
+  left=0
+  now=$(date +%s 2>/dev/null)
+  case "$t0$now" in '' | *[!0-9]*) return 0 ;; esac
+  left=$((7 - (now - t0)))
 }
 
 # The remote URL without credentials, or nothing. Only plain ASCII URL characters pass, so the
@@ -69,42 +77,35 @@ if [ -n "$top" ]; then
   printf '%s' "$hash" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || hash=
 fi
 
-# The .ergana file: the project folder, then the main checkout of a linked worktree (.git is a file
-# "gitdir: <path>", <path>/commondir the common git dir), then git's root and main checkout.
-main_of() { # the main checkout of a common git dir, when it is a checkout's .git
-  [ "${1##*/}" = .git ] && printf '%s' "${1%/*}"
-}
-ergana=
-[ -e "$dir/.ergana" ] && ergana=$dir/.ergana
-if [ -z "$ergana" ] && [ -f "$dir/.git" ]; then
-  gd=$(sed -n 's/^gitdir: *//p' "$dir/.git" 2>/dev/null | head -n 1)
-  case "$gd" in /*) ;; *) gd=$dir/$gd ;; esac
-  cd_=$(head -n 1 "$gd/commondir" 2>/dev/null)
-  case "$cd_" in /*) ;; *) cd_=$gd/$cd_ ;; esac
-  common=$(cd "$cd_" 2>/dev/null && pwd)
-  m=$(main_of "$common")
-  [ -n "$m" ] && [ -e "$m/.ergana" ] && ergana=$m/.ergana
-fi
-if [ -z "$ergana" ]; then
-  [ -n "$top" ] && [ -e "$top/.ergana" ] && ergana=$top/.ergana
-fi
-if [ -z "$ergana" ] && [ -n "$top" ]; then
-  common=$(git_ rev-parse --path-format=absolute --git-common-dir)
-  m=$(main_of "$common")
-  [ -n "$m" ] && [ -e "$m/.ergana" ] && ergana=$m/.ergana
-fi
+ergana_find
 
 out=
 [ -n "$repo" ] && out="\"X-Ergana-Repo\":\"$repo\""
 [ -n "$branch" ] && out="${out:+$out,}\"X-Ergana-Branch\":\"$branch\""
 [ -n "$hash" ] && out="${out:+$out,}\"X-Ergana-Root-Hash\":\"$hash\""
 if [ -n "$ergana" ]; then
-  # The first workspace line outside # comments, spaces around = and the value cut off.
-  slug=$(grep -v '^[[:space:]]*#' "$ergana" 2>/dev/null | grep -E '^[[:space:]]*workspace[[:space:]]*=' | head -n 1 |
-    sed 's/^[^=]*=//; s/^[[:space:]]*//; s/[[:space:]]*$//')
-  if printf '%s' "$slug" | LC_ALL=C grep -Eq '^[a-z0-9]{3,30}$'; then
+  slug=$(ergana_slug "$ergana")
+  if [ -n "$slug" ]; then
     case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
     out="${out:+$out,}\"X-Ergana-Workspace\":\"$slug\",\"Accept-Language\":\"$lang\""
+    # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
+    token=
+    budget_left
+    if [ "$left" -ge 1 ] && ! ergana_needs_confirm; then
+      budget_left
+      if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
+        if command -v perl >/dev/null 2>&1; then
+          token=$({ perl -e 'alarm shift; exec @ARGV or exit 1' "$left" python3 -I "$here/ergana-auth.py" header "$slug" "$left"; } 2>/dev/null)
+        else
+          token=$(python3 -I "$here/ergana-auth.py" header "$slug" "$left" 2>/dev/null)
+        fi
+      fi
+    fi
+    if [ "${#token}" -le 4096 ] && printf '%s' "$token" | LC_ALL=C grep -Eq '^[A-Za-z0-9._~+/=-]+$'; then
+      out="$out,\"Authorization\":\"Bearer $token\""
+    else
+      out="$out,\"Authorization\":\"Bearer ergana-not-connected\""
+    fi
   else
     out="${out:+$out,}\"Authorization\":\"Bearer ergana-not-connected\""
   fi
