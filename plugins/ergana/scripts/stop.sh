@@ -18,19 +18,18 @@ git rev-parse --verify -q HEAD >/dev/null 2>&1 || exit 0
 
 sum=$("$(cd "$(dirname "$0")" && pwd)/fingerprint.sh" .) &&
   printf '%s' "$sum" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || sum=unknown
+# Without a data folder it can write, the stop cannot be refused once per fingerprint: it goes
+# through rather than refuse forever (review R5).
 data=${CLAUDE_PLUGIN_DATA:-}
-if [ -n "$data" ]; then
-  [ "$(cat "$data/start/$session" 2>/dev/null)" = "$sum" ] && exit 0
-  [ "$(cat "$data/cleared/$session" 2>/dev/null)" = "$sum" ] && exit 0
-  if printf '%s' "$input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true' &&
-    [ "$(cat "$data/refused/$session" 2>/dev/null)" = "$sum" ]; then
-    exit 0
-  fi
-  if mkdir -p "$data/refused" 2>/dev/null; then
-    find "$data/refused" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
-    printf '%s\n' "$sum" >"$data/refused/$session"
-  fi
+[ -n "$data" ] && mkdir -p "$data/refused" 2>/dev/null || exit 0
+[ "$(cat "$data/start/$session" 2>/dev/null)" = "$sum" ] && exit 0
+[ "$(cat "$data/cleared/$session" 2>/dev/null)" = "$sum" ] && exit 0
+if printf '%s' "$input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true' &&
+  [ "$(cat "$data/refused/$session" 2>/dev/null)" = "$sum" ]; then
+  exit 0
 fi
+find "$data/refused" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
+printf '%s\n' "$sum" >"$data/refused/$session" 2>/dev/null || exit 0
 case ${LANG:-} in
   fr*) line='Ergana › Vérification du changement avant de terminer.' ;;
   *) line='Ergana › Checking the change before finishing.' ;;

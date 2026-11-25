@@ -57,4 +57,10 @@ printf '#!/bin/sh\nexit 1\n' >"$fake/fingerprint.sh"
 chmod +x "$fake"/*.sh
 got=$(printf '{"session_id":"s1","cwd":"%s","stop_hook_active":false}' "$repo" | LANG=en_US.UTF-8 sh "$fake/stop.sh")
 expect fingerprint-fails "$got" "$en"
+# no data folder it can write: never refused, so never refused forever (review R5)
+got=$(printf '{"session_id":"s1","cwd":"%s","stop_hook_active":true}' "$repo" | CLAUDE_PLUGIN_DATA= LANG=en_US.UTF-8 sh "$script")
+expect no-data-folder "$got" ""
+touch "$tmp/notadir"
+got=$(printf '{"session_id":"s1","cwd":"%s","stop_hook_active":false}' "$repo" | CLAUDE_PLUGIN_DATA="$tmp/notadir" LANG=en_US.UTF-8 sh "$script")
+expect unwritable-data-folder "$got" ""
 exit $failed
