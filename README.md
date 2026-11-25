@@ -63,6 +63,8 @@ session's start and with the last one a passing check cleared (`${CLAUDE_PLUGIN_
 once per fingerprint and the agent's `check_done` decides. A folder that is no git checkout, or has no commit, is not
 gated. Shell commands are no longer sent to Ergana's `before_edit`: the fingerprint sees what they changed.
 
+A `.ergana` file (`workspace = <slug>`), in the project folder or in the main checkout of a linked worktree, makes the MCP headers helper send `X-Ergana-Workspace` and `Accept-Language`; a `.ergana` that is malformed sends `Authorization: Bearer ergana-not-connected` instead of falling back to the shared sign-in.
+
 ## Tests
 
 ```
