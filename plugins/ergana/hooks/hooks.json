@@ -1,5 +1,5 @@
 {
-  "description": "Ergana: the session id at session start, the rules in scope before each edit (for the edited file's part of the repository) or shell command that changes files, the done gate on stop, the session's live state (working, waiting for you, or ended on /clear) and its name, the check agent kept read-only, and Ergana's own tools given this session's id, the check's diff hash computed, the hook-only tools kept to the hooks and the check tools to the check agent.",
+  "description": "Ergana: the session id at session start, the rules in scope before each edit (for the edited file's part of the repository), each shell command that changes files counted for the done gate on stop, the session's live state (working, waiting for you, or ended on /clear) and its name, the check agent kept read-only, and Ergana's own tools given this session's id, the repository's fingerprint computed (for the check and for the agent's own check_done after a refused stop), the hook-only tools kept to the hooks and the check tools to the check agent.",
   "hooks": {
     "SessionStart": [
       {
@@ -25,7 +25,7 @@
               "agent_type": "${agent_type}",
               "cwd": "${cwd}",
               "file_path": "${tool_input.file_path}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 30
           }
@@ -48,7 +48,7 @@
               "agent_type": "${agent_type}",
               "cwd": "${cwd}",
               "command": "${tool_input.command}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 30
           }
@@ -75,7 +75,7 @@
               "session_id": "${session_id}",
               "state": "waiting",
               "cwd": "${cwd}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 10
           }
@@ -93,7 +93,7 @@
               "session_id": "${session_id}",
               "cwd": "${cwd}",
               "background_tasks": "${background_tasks}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 30
           }
@@ -112,7 +112,7 @@
               "session_id": "${session_id}",
               "state": "working",
               "cwd": "${cwd}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 10
           }
@@ -131,7 +131,7 @@
               "session_id": "${session_id}",
               "state": "waiting",
               "cwd": "${cwd}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 10
           }
@@ -155,7 +155,7 @@
               "state": "working",
               "cwd": "${cwd}",
               "name": "${session_title}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 10
           }
@@ -174,7 +174,7 @@
               "session_id": "${session_id}",
               "state": "stopped",
               "cwd": "${cwd}",
-              "plugin_version": "0.10.0"
+              "plugin_version": "0.11.0"
             },
             "timeout": 10
           }

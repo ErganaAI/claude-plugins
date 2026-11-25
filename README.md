@@ -49,8 +49,18 @@ hash of the checkout's root folder (its sha256, never the folder itself). Before
 file's path: with the root's hash, Ergana finds which part of the repository the file is in and serves that part's
 rules. Ergana stores nothing of either path.
 
+When Ergana refuses a stop, the agent's own `check_done` call carries the repository's fingerprint: a sha256 of the
+checkout's top-level path, its base commit, its diff from that base and its untracked files that git does not ignore
+(`scripts/fingerprint.sh`). The rules check's diff hash is the same fingerprint, so a stop after a turn that changed
+nothing in the repository (a write to a scratch folder, a cache, `/tmp`) goes through without a new check. The
+fingerprint at the session's start is kept in the plugin's data folder (`${CLAUDE_PLUGIN_DATA}/start/<session id>`,
+removed after 30 days), so a session that never changed the repository finishes without a check. Only the hashes leave
+the machine.
+
 ## Tests
 
 ```
 sh tests/workspace-headers.test.sh
+sh tests/session-context.test.sh
+sh tests/fingerprint.test.sh
 ```

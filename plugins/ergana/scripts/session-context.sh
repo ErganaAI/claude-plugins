@@ -2,10 +2,12 @@
 # SessionStart: hand the agent its Claude Code session id and ask it to report its steps. The
 # server's instructions say the same, but agents seldom act on them alone (John, 19 Nov 2026).
 # No jq: the hook input is matched as text, and an id outside [A-Za-z0-9-]{1,128} prints nothing.
-id=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9-]\{1,128\}\)".*/\1/p' | head -n 1)
+input=$(cat)
+id=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9-]\{1,128\}\)".*/\1/p' | head -n 1)
 [ -n "$id" ] || exit 0
 echo "Ergana session id: $id."
 echo "Report this session's progress with Ergana's report_step tool and this id: first the repository (its origin URL) and the task in one line, with gh and gh_login from the GitHub line below, then the steps you will run, then each step's start and end."
+echo "When Ergana refuses your stop, first call Ergana's check_done tool yourself, with no arguments and without a word to the developer: it answers whether the repository changed since its last check, and what to do."
 
 # GitHub: what the ticket steps can do with this person's own gh (tickets design D6). One call,
 # at most 2 s (it checks the token over the network), that never prints the token:
@@ -43,3 +45,20 @@ login=${found#* }
 line="GitHub: gh=${found%% *}"
 [ "$login" = "$found" ] || [ -z "$login" ] || line="$line login=$login"
 echo "$line"
+
+# The repository's fingerprint at the session's start (fingerprint.sh), kept once per session in
+# the plugin's data folder: after a refused stop, the agent's check_done sends it (ergana-tools.sh),
+# so a session that changed nothing in the repository finishes without a check (server
+# docs/done-gate.md, A1). Written after the lines above, so a slow repository never costs them.
+# Files older than 30 days are removed.
+data=${CLAUDE_PLUGIN_DATA:-}
+cwd=$(printf '%s' "$input" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
+if [ -n "$data" ] && [ -n "$cwd" ] && mkdir -p "$data/start" 2>/dev/null; then
+  find "$data/start" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
+  if [ ! -s "$data/start/$id" ]; then
+    sum=$("$(cd "$(dirname "$0")" && pwd)/fingerprint.sh" "$cwd") &&
+      printf '%s' "$sum" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' &&
+      printf '%s\n' "$sum" >"$data/start/$id"
+  fi
+fi
+exit 0
