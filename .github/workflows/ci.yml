@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    # macOS too: test_f3 (the Keychain's `security` by absolute path) runs on darwin only.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tests
+        run: |
+          rc=0
+          for t in tests/*.test.py; do echo "::group::$t"; python3 "$t" || rc=1; echo "::endgroup::"; done
+          for t in tests/*.test.sh; do echo "::group::$t"; sh "$t" || rc=1; echo "::endgroup::"; done
+          exit $rc
+
+  # The one required check (ruleset 28137511): green only when every OS passed.
+  test:
+    needs: suites
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.suites.result }}" = success
