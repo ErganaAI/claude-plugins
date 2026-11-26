@@ -18,6 +18,8 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -125,7 +127,7 @@ class FakeOAuth:
                 outer.requests.append(("POST", u.path, f))
                 if u.path == "/oauth/revoke":
                     outer.revoked.append(f)
-                    return self._json(200, {})
+                    return self._json(500 if outer.revoke_fail else 200, {})
                 if u.path != "/oauth/token":
                     return self._json(404, {})
                 if outer.token_raw is not None:
@@ -142,6 +144,7 @@ class FakeOAuth:
                         outer.bad_exchanges.append(f)
                         return self._json(400, {"error": "invalid_grant", "marker": "RAW-BODY-MARKER"})
                     outer.exchanged.append(f)
+                    time.sleep(outer.exchange_delay)
                     return self._json(200, outer.pair(outer.answer_ws or q.get("workspace", "acme")))
                 if f.get("grant_type") == "refresh_token":
                     outer.refreshes.append(f)
@@ -168,7 +171,9 @@ class FakeOAuth:
         self.state_override = None
         self.answer_ws = None
         self.token_raw = None
+        self.revoke_fail = False
         self.refresh_delay = 0
+        self.exchange_delay = 0
         self.refresh_fail = False
         self.valid_refresh = set()
         self.n = 0
@@ -298,14 +303,6 @@ class Base(unittest.TestCase):
         for s in ("ACCESS-", "REFRESH-", "RAW-BODY-MARKER", "code-1") + forbidden:
             self.assertNotIn(s, out)
 
-    def trusted(self, repo):
-        p = subprocess.run(
-            ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "info/ergana-trusted"],
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        return os.path.exists(p) or os.path.exists(self.cfg("trusted"))
-
     def exclude(self, repo):
         p = subprocess.run(
             ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
@@ -341,8 +338,10 @@ class LoginTest(Base):
         self.assertEqual(len(self.server.exchanged), 1)
         self.assertEqual(self.server.bad_exchanges, [])
         self.assertEqual(self.get()["access"], "ACCESS-1")
-        self.assertIn("/mcp", r.stdout)
+        self.assertEqual(r.stdout.splitlines()[-1], "Ergana's tools work in this session from their next call. If one still says the server is not connected: in /mcp, choose `plugin:ergana:ergana`, then `Reconnect`.")
         self.assert_clean(r)
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
+        self.assertEqual(r.stdout.splitlines()[-1], "Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.")
 
     def test_1_wrong_state_refused(self):
         repo = self.repo()
@@ -363,11 +362,122 @@ class LoginTest(Base):
         self.server.answer_ws = "other"
         r = self.run_auth(["login", "--workspace", "acme"], cwd=repo)
         self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.", r.stderr)
         self.assertIsNone(self.get())
         self.assertIsNone(self.get("other"))
         self.assertFalse(os.path.exists(self.cfg("workspaces")))
         self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
         self.assert_clean(r)
+
+    def test_a_no_argument_no_ergana_token_decides(self):
+        repo = self.repo()
+        self.server.answer_ws = "acme"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("workspace", self.server.authorize[0])
+        self.assertNotIn("the acme workspace. If", r.stdout)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        with open(self.cfg("workspaces")) as f:
+            self.assertEqual(f.read().split("\n")[0], "%s acme" % self.server.host)
+        with open(os.path.join(repo, ".ergana")) as f:
+            self.assertEqual(f.read().strip(), "workspace = acme")
+        self.assertIn("/.ergana", self.exclude(repo).splitlines())
+        self.assert_clean(r)
+
+    def mismatch(self, ergana, arg, answer, lang="en_US.UTF-8", stored=None):
+        repo = self.repo(lang)
+        if ergana:
+            with open(os.path.join(repo, ".ergana"), "w") as f:
+                f.write("workspace = %s\n" % ergana)
+        if stored:
+            self.put(stored)
+        self.server.answer_ws = answer
+        r = self.run_auth(["login"] + (["--workspace", arg] if arg else []), cwd=repo, env={"LANG": lang})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(len(self.server.revoked), 1)
+        self.assertEqual(self.server.revoked[0]["token"], "REFRESH-1")
+        self.assertEqual(self.server.revoked[0]["token_type_hint"], "refresh_token")
+        self.assertIsNone(self.get("acme"))
+        self.assertIsNone(self.get(answer) if answer.isalnum() else None)
+        self.assert_clean(r)
+        return repo, r
+
+    def test_b_ergana_mismatch_en_fr(self):
+        repo, r = self.mismatch("acme", None, "other")
+        self.assertIn("This repository is linked to the acme workspace; the account signed in belongs to the other workspace.",
+                      r.stderr)
+        with open(os.path.join(repo, ".ergana")) as f:
+            self.assertEqual(f.read(), "workspace = acme\n")
+        self.setUp_reset()
+        repo, r = self.mismatch("acme", None, "other", lang="fr_FR.UTF-8")
+        self.assertIn("Ce dépôt est lié à l'espace acme ; le compte connecté appartient à l'espace other.", r.stderr)
+
+    def setUp_reset(self):
+        self.server.reset()
+
+    def test_b2_argument_mismatch(self):
+        repo, r = self.mismatch(None, "acme", "other")
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.setUp_reset()
+        repo, r = self.mismatch(None, "acme", "other", lang="fr_FR.UTF-8")
+        self.assertIn("Connexion demandée à l'espace acme ; le compte connecté appartient à l'espace other.", r.stderr)
+
+    def test_b3_stale_pair_of_received_workspace_deleted(self):
+        repo, r = self.mismatch("acme", None, "other", stored="other")
+        self.assertIsNone(self.get("other"))
+        self.assertNotIn("other", open(self.cfg("workspaces")).read() if os.path.exists(self.cfg("workspaces")) else "")
+
+    def test_b4_revoke_failure_second_line(self):
+        repo = self.repo()
+        self.server.answer_ws = "other"
+        self.server.revoke_fail = True
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Revocation not confirmed: refused by the server (HTTP 500)", r.stderr)
+        self.assertEqual(r.stderr.count("\n"), 2)
+
+    def test_c_invalid_received_slug(self):
+        repo = self.repo()
+        self.server.answer_ws = "../x"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid server response", r.stderr)
+        self.assertEqual([f["token"] for f in self.server.revoked], ["REFRESH-1"])
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.assertFalse(os.path.exists(os.path.join(self.home, "x")))
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+        self.assert_clean(r)
+
+    def test_c_trailing_newline_slug_refused(self):
+        repo = self.repo()
+        self.server.answer_ws = "acme\n"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid server response", r.stderr)
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+
+    def test_d_ergana_slug_sent_to_authorize(self):
+        repo = self.repo()
+        with open(os.path.join(repo, ".ergana"), "w") as f:
+            f.write("workspace = acme\n")
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.server.authorize[0]["workspace"], "acme")
+
+    def test_e_replaces_stored_pair_without_revoke(self):
+        self.put("acme")
+        repo = self.repo()
+        self.server.answer_ws = "acme"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.server.authorize), 1)
+        self.assertEqual(self.server.revoked, [])
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertEqual(self.get()["refresh"], "REFRESH-1")
+        self.assertTrue(os.path.exists(os.path.join(repo, ".ergana")))
 
     def test_8_writes_ergana_and_absolute_exclude_from_subfolder(self):
         repo = self.repo()
@@ -550,6 +660,40 @@ class FileStoreTest(Base):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "")
 
+    # header - (DR-0055.D1): the machine's one workspace for the origin's host, on one line
+    def test_header_dash_one_workspace(self):
+        self.put(access="ONE-ACCESS")
+        self.mod.index_add("other", host="elsewhere.example")  # another host's line is not counted
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "acme ONE-ACCESS\n"), r.stderr)
+
+    def test_header_dash_one_workspace_named_many(self):
+        self.put(slug="many", access="M-ACCESS")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "many M-ACCESS\n"), r.stderr)
+
+    def test_header_dash_two_workspaces_exit_3(self):
+        self.put(slug="acme")
+        self.put(slug="second")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (3, ""))
+
+    def test_header_dash_none_exit_4(self):
+        self.mod.index_add("other", host="elsewhere.example")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (4, ""))
+
+    def test_header_dash_no_token_exit_1_with_slug(self):
+        self.mod.index_add("acme")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (1, "acme\n"))
+
+    def test_header_dash_refreshes_like_a_slug(self):
+        self.put(expires_in=100)
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "acme ACCESS-1\n"), r.stderr)
+        self.assertEqual(len(self.server.refreshes), 1)
+
     def test_5_concurrent_headers_refresh_once(self):
         self.put(expires_in=100)
         self.server.refresh_delay = 0.6
@@ -699,6 +843,161 @@ class FileStoreTest(Base):
         self.assertEqual(self.get()["access"], "ACCESS-1")
         self.assertEqual(self.server.bad_exchanges, [])
 
+    # -- the browser's return page: one self-contained HTML answer, after the exchange
+    def _page(self, target, lang="en_US.UTF-8"):
+        """Runs login with a browser that fetches `target` (an expression); (result, status, headers, body)."""
+        self._stub("import json\nstate = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)['state'][0]\n"
+                   "try:\n    r = urllib.request.urlopen(%s, timeout=30)\n"
+                   "except urllib.error.HTTPError as e:\n    r = e\n"
+                   "log.write(json.dumps([r.getcode(), dict(r.headers), r.read().decode()]) + '\\n')\n" % target)
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=self.repo(), env={"LANG": lang}, timeout=40)
+        status, headers, body = json.loads(open(self.open_log).read().splitlines()[0])
+        for secret in ("code-", "ACCESS-", "REFRESH-"):
+            self.assertNotIn(secret, body)  # neither the authorization code nor a token is shown
+        return r, status, headers, body
+
+    def _self_contained(self, headers, body):
+        self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
+        csp = headers["Content-Security-Policy"]
+        self.assertIn("default-src 'none'", csp)
+        nonce = csp.split("style-src 'nonce-")[1].split("'")[0]
+        self.assertIn('<style nonce="%s">' % nonce, body)
+        for s in ("src=", "href=", "url(", "@import", "http"):
+            self.assertNotIn(s, body)  # nothing loaded from the network
+        self.assertIn('aria-label="Ergana"', body)  # the inline mark
+        return nonce
+
+    def test_page_connected(self):
+        r, status, headers, body = self._page("url")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(status, 200)
+        self._self_contained(headers, body)
+        self.assertIn("Claude Code is connected", body)
+        self.assertIn("This repository now uses <strong>acme</strong>.", body)
+        self.assertIn('<li class="now" aria-current="step"><b>3</b>Back to Claude Code', body)
+        self.assertNotIn("<script", body)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+
+    def test_page_connected_fr(self):
+        _, status, _, body = self._page("url", lang="fr_FR.UTF-8")
+        self.assertEqual(status, 200)
+        self.assertIn('<html lang="fr">', body)
+        self.assertIn("Claude Code est connecté", body)
+        self.assertIn("Ce dépôt utilise désormais <strong>acme</strong>.", body)
+
+    def test_page_denied(self):
+        r, status, headers, body = self._page("redirect + '?state=' + state")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("sign-in refused in the browser", r.stderr)
+        self.assertEqual(status, 400)
+        nonce = self._self_contained(headers, body)
+        self.assertIn("script-src 'nonce-%s'" % nonce, headers["Content-Security-Policy"])
+        self.assertIn('<script nonce="%s">' % nonce, body)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Access was denied in the browser. To try again, run this in the repository:", body)
+        self.assertIn("<code>/ergana:login</code>", body)
+        self.assertIn('<li class="now" aria-current="step"><b>2</b>Allow', body)
+        self.assertEqual(self.server.exchanged, [])
+
+    def test_page_denied_fr(self):
+        _, status, _, body = self._page("redirect + '?state=' + state", lang="fr_FR.UTF-8")
+        self.assertEqual(status, 400)
+        self.assertIn("Rien n'a été connecté", body)
+        self.assertIn("L&#x27;accès a été refusé dans le navigateur. Pour réessayer, lancer ceci dans le dépôt :", body)
+        self.assertIn('<span aria-live="polite">Copier</span>', body)
+
+    def test_page_failed_gives_the_reason(self):
+        self.server.answer_ws = "other"
+        r, status, headers, body = self._page("url")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.",
+                      body)
+        self.assertIsNone(self.get())
+
+    def test_page_token_endpoint_http_error(self):
+        r, status, headers, body = self._page("redirect + '?state=' + state + '&code=code-9'")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("refused by the server (HTTP 400)", r.stderr)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Refused by the server (HTTP 400).", body)
+        self.assertNotIn("RAW-BODY-MARKER", body)
+        self.assert_clean(r)
+        self.assertIsNone(self.get())
+
+    def test_page_token_endpoint_unreachable(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        closed = "http://127.0.0.1:%d" % s.getsockname()[1]
+        s.close()
+        os.environ["ERGANA_ORIGIN"] = closed
+        r, status, headers, body = self._page("redirect + '?state=' + state + '&code=code-9'")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("server unreachable", r.stderr)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Server unreachable.", body)
+        self.assert_clean(r)
+
+    def test_page_internal_error(self):
+        """A non-Fail error in the exchange: the page says "internal error", the error itself goes to the CLI."""
+        pages = []
+
+        def fetch(url):
+            try:
+                urllib.request.urlopen(url, timeout=20).close()
+            except urllib.error.HTTPError as e:
+                with e:
+                    pages.append((e.code, e.read().decode()))
+
+        threads = []
+
+        def browser(url):
+            threads.append(threading.Thread(target=fetch, args=(url,), daemon=True))
+            threads[0].start()
+
+        boom = RuntimeError("SECRET-DETAIL")
+        with mock.patch.object(self.mod, "open_browser", browser), \
+                mock.patch.object(self.mod, "token_request", side_effect=boom):
+            with self.assertRaises(RuntimeError) as cm:
+                self.mod.browser_login(self.server.origin, "acme")
+        threads[0].join(20)
+        self.assertIs(cm.exception, boom)
+        status, body = pages[0]
+        self.assertEqual(status, 400)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Internal error. To try again", body)
+        for s in ("SECRET-DETAIL", "RuntimeError", "code-", "ACCESS-", "REFRESH-"):
+            self.assertNotIn(s, body)
+
+    def test_tab_closed_during_exchange_prints_nothing(self):
+        """The browser drops the connection while the exchange runs: the write fails, quietly, login succeeds."""
+        self.server.exchange_delay = 1
+        self._stub("import http.client, struct, time\n"
+                   "a = urllib.parse.urlparse(url)\n"
+                   "c = http.client.HTTPConnection(a.netloc, timeout=10)\n"
+                   "c.request('GET', a.path + '?' + a.query)\n"
+                   "cb = urllib.parse.urlparse(c.getresponse().getheader('Location'))\n"
+                   "s = socket.create_connection(('127.0.0.1', port))\n"
+                   "s.sendall(('GET %s?%s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n' % (cb.path, cb.query)).encode())\n"
+                   "time.sleep(0.3)\n"
+                   "s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))\n"
+                   "s.close()  # a reset, as a closed tab\n")
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=self.repo(), timeout=40)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assert_clean(r)
+        self.assertNotIn("Exception", r.stderr)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+
+    def test_page_escapes_its_text(self):
+        evil = '<img src=x onerror="alert(1)">&'
+        for page in (self.mod.callback_page(evil, None, "n"), self.mod.callback_page(None, evil, "n")):
+            self.assertNotIn(evil, page)
+            self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;", page)
+
     # -- F4: a symlinked .ergana is never written through
     def test_f4_dangling_symlink_not_written_through(self):
         repo = self.repo()
@@ -767,6 +1066,46 @@ class FileStoreTest(Base):
         self.assertIn("survived True", r.stdout)  # handlers back to the default afterwards
         self.assertEqual(self.get()["refresh"], "REFRESH-1")
 
+    def test_login_signals_ignored_while_storing_then_restored(self):
+        # from the code exchange to the store nothing may kill the login: the server superseded the old grant
+        repo = self.repo()
+        code = (
+            "import importlib.util, os, signal, sys\nsys.dont_write_bytecode = True\n"
+            "spec = importlib.util.spec_from_file_location('ea', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "orig = m.store_secret\n"
+            "def store(*a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM); os.kill(os.getpid(), signal.SIGHUP)\n"
+            "    os.kill(os.getpid(), signal.SIGINT)\n"
+            "    return orig(*a, **k)\n"
+            "m.store_secret = store\n"
+            "rc = m.cmd_login([])\n"
+            "print('survived', rc, signal.getsignal(signal.SIGTERM) is signal.SIG_DFL)\n"
+        ) % SCRIPT
+        r = subprocess.run([sys.executable, "-c", code], cwd=repo, env=dict(os.environ), capture_output=True,
+                           text=True, timeout=60)
+        self.assertIn("survived 0 True", r.stdout, (r.returncode, r.stderr))
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertTrue(os.path.exists(os.path.join(repo, ".ergana")))
+
+    def test_login_store_waits_for_the_renewal_lock(self):
+        repo = self.repo()
+        lock = self.secret_file() + ".lock"
+        os.makedirs(lock)  # a live renewal: this process's pid, a fresh lock
+        with open(os.path.join(lock, "owner"), "w") as f:
+            f.write("%d %d\n" % (os.getpid(), int(time.time())))
+        p = self.popen_auth(["login"], cwd=repo)
+        deadline = time.time() + 30
+        while not self.server.exchanged and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        self.assertIsNone(self.get())  # not stored while the lock is held
+        shutil.rmtree(lock)
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertFalse(os.path.exists(lock))
+
     def test_f1_answer_just_inside_the_post_deadline_is_stored(self):
         self.put(expires_in=100)
         r = self._driver(6, delay=4.0)  # budget deadline 5.7 s, POST deadline 4.2 s
@@ -801,6 +1140,19 @@ class FileStoreTest(Base):
         self.assertNotIn("SECRET-ACCESS-VALUE", r.stdout + r.stderr)
         self.assertNotIn("REFRESH-OLD", r.stdout + r.stderr)
 
+    def test_status_names_the_one_workspace_without_ergana(self):  # DR-0057.D1
+        repo = self.repo()
+        self.put(access="SECRET-ACCESS-VALUE")
+        r = self.run_auth(["status"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("acme", r.stdout)
+        self.assertIn("only workspace signed in on this machine", r.stdout)
+        self.assertNotIn("No .ergana", r.stdout)
+        self.assertNotIn("SECRET-ACCESS-VALUE", r.stdout + r.stderr)
+        self.put(slug="second")
+        r = self.run_auth(["status"], cwd=repo)
+        self.assertIn("No .ergana file", r.stdout)
+
     def test_later_writes_marker(self):
         repo = self.repo()
         r = self.run_auth(["later"], cwd=repo)
@@ -811,18 +1163,6 @@ class FileStoreTest(Base):
             text=True,
         ).stdout.strip()
         self.assertTrue(os.path.exists(p))
-
-    def test_13_no_subcommand_writes_the_confirmation(self):
-        repo = self.repo()
-        with open(os.path.join(repo, ".ergana"), "w") as f:
-            f.write("workspace = acme\n")
-        subprocess.run(["git", "-C", repo, "add", ".ergana"], check=True)
-        self.put(expires_in=100)
-        self.put(slug="other1", access="O", refresh="REFRESH-O1")
-        for args in (["login"], ["status"], ["later"], ["header", "acme", "5"], ["logout"]):
-            self.run_auth(args, cwd=repo)
-        self.run_auth(["login", "--workspace", "acme"], cwd=repo)
-        self.assertFalse(self.trusted(repo))
 
 
 if __name__ == "__main__":

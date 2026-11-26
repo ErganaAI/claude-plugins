@@ -6,4 +6,4 @@ disable-model-invocation: true
 
 Call Ergana's `review_guide` tool with this session's id (from the Ergana line at session start) and follow the instructions it returns, step by step.
 
-If Ergana's tools are not available, tell the person, in their language, that Ergana is not connected: run `/mcp`, choose ergana, then Authenticate.
+If Ergana's tools are not available, tell the person, in their language: when the repository has a `.ergana` file, run `/ergana:login`, then in `/mcp` choose `plugin:ergana:ergana`, then `Reconnect`; otherwise run `/mcp`, choose `plugin:ergana:ergana`, then `Authenticate`. These labels stay as Claude Code shows them, in code style, untranslated.

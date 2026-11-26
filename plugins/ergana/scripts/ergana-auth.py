@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Ergana's sign-in per workspace: login, status, logout, later, header.
 
-    ergana-auth.py login [--workspace <slug>]   browser sign-in (PKCE), the token kept per workspace
+    ergana-auth.py login [--workspace <slug>]   browser sign-in (PKCE), the token kept per workspace; the
+                                                workspace is optional, the account signed in decides
     ergana-auth.py status                       the repository's workspace and whether it is connected
     ergana-auth.py logout [--workspace <slug>]  revoke, then forget the token
     ergana-auth.py later                        do not offer the sign-in again in this repository
-    ergana-auth.py header <slug> <budget>       the access token for the MCP headers helper (renewed when
-                                                it expires within 5 minutes); nothing but the token on stdout
+    ergana-auth.py header <slug|-> <budget>     the access token for the MCP headers helper (renewed when
+                                                it expires within 5 minutes); nothing but the token on stdout.
+                                                `-`: the origin's one workspace, `<slug> <token>` on one line
+                                                (exit 3: two or more, 4: none, 1 with the slug alone: no token)
 
 Python 3.9, standard library only. The origin is https://app.ergana.ai; ERGANA_ORIGIN (and
 ERGANA_AUTH_KEYCHAIN, ERGANA_LOGIN_WAIT) are read only when ERGANA_AUTH_TEST=1. Every secret is filed under its origin's host and
@@ -15,6 +18,7 @@ access token that `header` prints; errors are one line with no response content.
 """
 import base64
 import hashlib
+import html
 import http.client
 import json
 import os
@@ -80,7 +84,7 @@ def host_of(o):
 
 
 def check_slug(slug):
-    if not isinstance(slug, str) or not SLUG_RE.match(slug):
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
         raise Fail(t("espace invalide (3 à 30 lettres minuscules ou chiffres)",
                      "invalid workspace (3 to 30 lowercase letters or digits)"), 2)
     return slug
@@ -388,6 +392,92 @@ def client_id(o):
 
 # ---- login
 
+# The page the browser shows after /connect: tokens and markup of Ergana's /connect pages (card.css), self-contained
+# (system fonts, inline SVG, nothing from the network), dark by default, light through prefers-color-scheme.
+PAGE_CSS = """
+:root{color-scheme:dark;--primary:#8b7bf0;--bg:#0a0e16;--card:#131822;--muted:#1e2530;--line:#2f3744;
+--muted-fg:#98a2b2;--fg:#f7f9fb;--logo-top:#8b7bf0;--logo-mid:#c4baf8;--logo-bot:#6a55dd;--logo-eye:#46359c;
+--attention:#ff8a3d;--attention-soft:color-mix(in oklab,var(--attention) 11%,var(--card))}
+@media (prefers-color-scheme:light){:root{color-scheme:light;--primary:#5847c9;--bg:#f4f4f5;--card:#fff;
+--muted:#ececef;--line:#e4e4e7;--muted-fg:#4b5563;--fg:#0e131c;--logo-top:#5847c9;--logo-mid:#8f7eec;
+--logo-bot:#3f3095;--logo-eye:#d3ccf9;--attention:#a35200}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg)}
+body{font:.875rem/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+main{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:48px 16px}
+.column{width:100%;max-width:480px}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+svg.logo{display:block;height:32px;width:auto;margin:0 auto 24px;stroke:none}
+.logo-top{fill:var(--logo-top)}.logo-mid{fill:var(--logo-mid)}.logo-bot{fill:var(--logo-bot)}.logo-eye{fill:var(--logo-eye)}
+.steps{display:flex;justify-content:center;gap:6px;margin:0 0 14px;padding:0;list-style:none;font-size:12px;
+color:var(--muted-fg)}
+.steps li{display:flex;align-items:center;gap:6px}
+.steps li+li::before{content:"";width:18px;height:1px;background:var(--line)}
+.steps b{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1px solid var(--line);
+font-size:11px;font-weight:600}
+.steps .now{color:var(--fg);font-weight:600}
+.steps .now b{background:var(--primary);color:var(--bg);border-color:transparent}
+.steps .done b{background:var(--muted);color:var(--muted-fg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:.75rem;padding:32px;text-align:center}
+.card>*+*{margin-top:20px}
+.icon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 auto;border-radius:50%;
+background:var(--muted);color:var(--primary)}
+.icon.attention{background:var(--attention-soft);color:var(--attention)}
+.icon svg{width:24px;height:24px}
+h1{font-size:1.5rem;line-height:1.25;font-weight:600;letter-spacing:-.01em;margin:0;text-wrap:balance}
+p{margin:6px auto 0;max-width:40ch;font-size:15px;color:var(--muted-fg);text-wrap:balance}
+.copy{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:.5rem;text-align:left;
+background:color-mix(in oklab,var(--muted) 40%,transparent);padding:4px 4px 4px 12px}
+.copy code{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px}
+.copy button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:.5rem;
+background:none;color:var(--fg);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.copy button:hover{background:var(--muted)}
+.copy svg{width:14px;height:14px}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+@media (max-width:520px){.card{padding:24px}}
+"""
+MARK = ('<svg class="logo" viewBox="0 0 34 42" role="img" aria-label="Ergana"><rect class="logo-top" y="2" width="34" '
+        'height="8" rx="4"/><rect class="logo-mid" y="17" width="17" height="8" rx="4"/><circle class="logo-eye" '
+        'cx="27" cy="21" r="4.5"/><rect class="logo-bot" y="32" width="34" height="8" rx="4"/></svg>')
+ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">%s</svg>'  # Lucide (ISC licence)
+ICON_CHECK = ICON % '<path d="M20 6 9 17l-5-5"/>'
+ICON_ALERT = ICON % '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>'
+ICON_COPY = ICON % ('<rect width="14" height="14" x="8" y="8" rx="2"/>'
+                    '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>')
+COPY_JS = ("var b=document.querySelector('.copy button');b.onclick=function(){navigator.clipboard.writeText("
+           "'/ergana:login').then(function(){b.lastChild.textContent=b.dataset.done})}")
+
+
+def callback_page(workspace, reason, nonce):
+    """The HTML answer to /callback: connected to `workspace`, or nothing connected for `reason` (plain text)."""
+    esc = html.escape
+    now = 3 if workspace else 2
+    names = (t("Connexion", "Sign in"), t("Autorisation", "Allow"), t("Retour à Claude Code", "Back to Claude Code"))
+    steps = "".join('<li%s><b>%s</b>%s</li>' % (
+        ' class="now" aria-current="step"' if i == now else ' class="done"' if i < now else "",
+        "✓" if i < now else i, n) for i, n in enumerate(names, 1))
+    if workspace:
+        title = t("Claude Code est connecté", "Claude Code is connected")
+        card = '<div class="icon">%s</div><div><h1>%s</h1><p>%s</p></div>' % (
+            ICON_CHECK, title, t("Ce dépôt utilise désormais <strong>%s</strong>. Revenir au terminal ; cet onglet "
+                                 "peut être fermé.", "This repository now uses <strong>%s</strong>. Go back to your "
+                                 "terminal; you can close this tab.") % esc(workspace))
+        script = ""
+    else:
+        title = t("Rien n'a été connecté", "Nothing was connected")
+        card = ('<div class="icon attention">%s</div><div><h1>%s</h1><p>%s %s</p></div><div class="copy">'
+                '<code>/ergana:login</code><button type="button" data-done="%s">%s<span aria-live="polite">%s</span></button></div>') % (
+            ICON_ALERT, title, esc(reason), t("Pour réessayer, lancer ceci dans le dépôt :",
+                                              "To try again, run this in the repository:"),
+            t("Copié", "Copied"), ICON_COPY, t("Copier", "Copy"))
+        script = '<script nonce="%s">%s</script>' % (nonce, COPY_JS)
+    return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-'
+            'width, initial-scale=1"><title>%s · Ergana</title><style nonce="%s">%s</style></head><body><main><div '
+            'class="column">%s<ol class="steps" aria-label="%s">%s</ol><section class="card">%s</section></div></main>'
+            '%s</body></html>') % (t("fr", "en"), title, nonce, PAGE_CSS, MARK, t("Étapes", "Steps"), steps, card,
+                                   script)
+
+
 class Callback(BaseHTTPRequestHandler):
     timeout = 5  # an idle connection must not hold the single-threaded server
 
@@ -412,16 +502,31 @@ class Callback(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         elif q.get("code"):
-            srv.result = {"code": q["code"]}
-            ok = True
+            # The exchange runs here so the page can name the workspace; any error is kept for browser_login.
+            try:
+                srv.result = {"workspace": srv.exchange(q["code"])}
+            except Exception as e:
+                srv.result = {"error": e}
         else:
-            srv.result = {"error": t("connexion refusée dans le navigateur", "sign-in refused in the browser")}
-            ok = False
-        body = (t("Ergana : connexion terminée, cet onglet peut être fermé.",
-                  "Ergana: signed in, this tab can be closed.") if ok else
-                t("Ergana : connexion échouée.", "Ergana: sign-in failed.")).encode("utf-8")
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+            srv.result = {"error": Fail(t("connexion refusée dans le navigateur", "sign-in refused in the browser"))}
+        ws = srv.result.get("workspace")
+        if ws:
+            reason = None
+        elif q.get("code"):
+            e = srv.result["error"]
+            reason = str(e).replace("\n", " ") if isinstance(e, Fail) else t("erreur interne", "internal error")
+            reason = reason[:1].upper() + reason[1:] + ("" if reason.endswith(".") else ".")
+        else:
+            reason = t("L'accès a été refusé dans le navigateur.", "Access was denied in the browser.")
+        nonce = secrets.token_urlsafe(16)
+        body = callback_page(ws, reason, nonce).encode("utf-8")
+        self.send_response(200 if ws else 400)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'none'; style-src 'nonce-%s'; script-src 'nonce-%s'; base-uri 'none'; "
+                         "form-action 'none'; frame-ancestors 'none'" % (nonce, nonce))
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -441,20 +546,72 @@ class CallbackServer(HTTPServer):
     # HTTPServer.server_bind calls socket.getfqdn, a reverse DNS lookup that takes 35 s on a slow resolver.
     server_bind = socketserver.TCPServer.server_bind
 
+    def handle_error(self, request, client_address):
+        # A tab closed while the exchange ran makes the page's write fail: the login's result stands, so print
+        # nothing. Any other error keeps socketserver's report.
+        if not isinstance(sys.exc_info()[1], OSError):
+            super().handle_error(request, client_address)
 
-def browser_login(o, slug):
+
+def browser_login(o, slug, fslug=None):
+    """Sign in at the browser; the pair is stored under the workspace the token names, which is returned."""
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
     srv = CallbackServer(("127.0.0.1", 0), Callback)
     srv.state = secrets.token_urlsafe(24)
     srv.result = None
     redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
+
+    def exchange(code):
+        """The code for the pair, stored under the workspace the token names, which is returned."""
+        host = host_of(o)
+        # From the exchange until the pair is stored nothing may kill this process: the server has superseded
+        # the previous grant, and a pair lost here locks the person out.
+        old = {s: signal.signal(s, signal.SIG_IGN)
+               for s in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            data, secret = token_request(o, {
+                "grant_type": "authorization_code", "code": code, "redirect_uri": redirect,
+                "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
+            got = data.get("ergana_workspace")
+            refusal = None
+            if not isinstance(got, str) or not SLUG_RE.fullmatch(got):
+                refusal = t("réponse du serveur invalide", "invalid server response")
+            elif slug and got != slug:
+                refusal = (t("Ce dépôt est lié à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                             "This repository is linked to the %s workspace; the account signed in belongs to the %s workspace.")
+                           if fslug else
+                           t("Connexion demandée à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                             "Sign-in asked for the %s workspace; the account signed in belongs to the %s workspace.")
+                           ) % (slug, got)
+                delete_secret(got, host)  # the server superseded it
+                index_remove(got, host)
+            if refusal:
+                try:
+                    post_form(o, "/oauth/revoke", {"token": secret["refresh"], "token_type_hint": "refresh_token",
+                                                   "client_id": client_id(o)}, 5)
+                except Fail as e:
+                    refusal += "\n" + t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % e
+                raise Fail(refusal)
+            lock = secret_file(got, host) + ".lock"
+            host_dir(host)
+            acquire(lock, time.monotonic() + 10)
+            try:
+                store_secret(got, secret, host)
+            finally:
+                shutil.rmtree(lock, ignore_errors=True)
+        finally:
+            for sig, h in old.items():
+                signal.signal(sig, h)
+        return got
+
+    srv.exchange = exchange
     url = o + "/oauth/authorize?" + urllib.parse.urlencode({
         "response_type": "code", "client_id": client_id(o), "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": srv.state,
-        "resource": o + "/mcp", "workspace": slug})
-    print(t("Ouverture du navigateur pour la connexion à l'espace %s. Sans ouverture, ouvrir ce lien : %s",
-            "Opening the browser to sign in to the %s workspace. If nothing opens, open this link: %s") % (slug, url))
+        "resource": o + "/mcp", **({"workspace": slug} if slug else {})})
+    print(t("Ouverture du navigateur pour la connexion à Ergana. Sans ouverture, ouvrir ce lien : %s",
+            "Opening the browser to sign in to Ergana. If nothing opens, open this link: %s") % url)
     sys.stdout.flush()
     open_browser(url)
     wait = float(os.environ.get("ERGANA_LOGIN_WAIT") or LOGIN_WAIT) if test_mode() else LOGIN_WAIT
@@ -469,14 +626,8 @@ def browser_login(o, slug):
     finally:
         srv.server_close()
     if "error" in srv.result:
-        raise Fail(srv.result["error"])
-    data, secret = token_request(o, {
-        "grant_type": "authorization_code", "code": srv.result["code"], "redirect_uri": redirect,
-        "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
-    if data.get("ergana_workspace") != slug:
-        raise Fail(t("le jeton reçu est d'un autre espace que %s : rien n'est rangé",
-                     "the token received is for another workspace than %s: nothing is stored") % slug)
-    return secret
+        raise srv.result["error"]
+    return srv.result["workspace"]
 
 
 def cmd_login(args):
@@ -489,20 +640,21 @@ def cmd_login(args):
                      "this repository is linked to the %s workspace by its .ergana file: sign-in to %s refused")
                    % (fslug, arg))
     slug = arg or fslug
-    if not slug:
-        raise Fail(t("espace à indiquer : login --workspace <espace>", "workspace needed: login --workspace <slug>"), 2)
     o = origin()
     host = host_of(o)
-    have = load_secret(slug, host)
+    have = load_secret(slug, host) if slug else None
     if have and have["origin"] == o and have["expires_at"] - time.time() > 60:
         print(t("L'espace %s est déjà connecté.", "The %s workspace is already connected.") % slug)
     else:
-        store_secret(slug, browser_login(o, slug), host)
+        slug = browser_login(o, slug, fslug)
         print(t("Connecté à l'espace %s.", "Signed in to the %s workspace.") % slug)
     index_add(slug, host)
-    write_ergana(start, slug)
-    print(t("Reconnecter ergana dans /mcp, ou ouvrir une nouvelle session.",
-            "Reconnect ergana in /mcp, or open a new session."))
+    if not path:
+        write_ergana(start, slug)
+    # The server lets ergana-not-connected through the handshake and refuses only tool calls, on which Claude Code
+    # runs the headers helper again: the session's next call carries the new token (#31).
+    print(t("Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.",
+            "Ergana's tools work in this session from their next call. If one still says the server is not connected: in /mcp, choose `plugin:ergana:ergana`, then `Reconnect`."))
     return 0
 
 
@@ -556,24 +708,62 @@ def usable(sec, o):
     return bool(sec) and sec["origin"] == o
 
 
+def host_slugs(host):
+    """The workspaces of that host in the index, without duplicates."""
+    slugs = []
+    for l in index_lines():
+        f = l.split(" ")
+        if len(f) == 2 and f[0] == host and SLUG_RE.fullmatch(f[1]) and f[1] not in slugs:
+            slugs.append(f[1])
+    return slugs
+
+
+def cmd_only(args):
+    """Print the origin's one workspace from the index (no network); exit 3 when there are 0 or 2+."""
+    if args:
+        raise Fail("usage: ergana-auth.py only", 2)
+    slugs = host_slugs(host_of(origin()))
+    if len(slugs) != 1:
+        return 3
+    print(slugs[0])
+    return 0
+
+
 def cmd_header(args):
     start = time.monotonic()
     if len(args) != 2:
-        raise Fail("usage: ergana-auth.py header <slug> <budget>", 2)
-    slug = check_slug(args[0])
+        raise Fail("usage: ergana-auth.py header <slug|-> <budget>", 2)
     try:
         budget = float(args[1])
     except ValueError:
-        raise Fail("usage: ergana-auth.py header <slug> <budget>", 2)
+        raise Fail("usage: ergana-auth.py header <slug|-> <budget>", 2)
     deadline = start + budget - 0.3
     o = origin()
     host = host_of(o)
+    if args[0] != "-":
+        sys.stdout.write(header_token(check_slug(args[0]), host, o, deadline) + "\n")
+        return 0
+    # No .ergana (DR-0055.D1): the origin's one workspace on this machine, "<slug> <token>" on one line.
+    slugs = host_slugs(host)
+    if len(slugs) != 1:
+        return 3 if slugs else 4
+    try:
+        tok = header_token(slugs[0], host, o, deadline)
+    except Fail as e:  # not connected, out of time: the slug alone lets the helper name the workspace
+        sys.stderr.write("ergana: %s\n" % e)
+        sys.stdout.write(slugs[0] + "\n")
+        return 1
+    sys.stdout.write("%s %s\n" % (slugs[0], tok))
+    return 0
+
+
+def header_token(slug, host, o, deadline):
+    """The workspace's access token, renewed when it expires within REFRESH_MARGIN."""
     sec = load_secret(slug, host)
     if not usable(sec, o):
         raise Fail(t("espace non connecté", "workspace not connected"))
     if sec["expires_at"] - time.time() > REFRESH_MARGIN:
-        sys.stdout.write(sec["access"] + "\n")
-        return 0
+        return sec["access"]
     lock = secret_file(slug, host) + ".lock"
     host_dir(host)
     acquire(lock, deadline)
@@ -600,8 +790,7 @@ def cmd_header(args):
             sec = new
     finally:
         shutil.rmtree(lock, ignore_errors=True)
-    sys.stdout.write(sec["access"] + "\n")
-    return 0
+    return sec["access"]
 
 
 # ---- logout, status, later
@@ -645,9 +834,14 @@ def cmd_status(args):
     slug, path, tracked = repo_slug()
     o = origin()
     host = host_of(o)
-    if slug:
-        source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
-            t("fichier .ergana local", "local .ergana file")
+    only = host_slugs(host) if not slug else []
+    if slug or len(only) == 1:
+        if slug:
+            source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
+                t("fichier .ergana local", "local .ergana file")
+        else:  # DR-0057.D1
+            slug = only[0]
+            source = t("seul espace connecté sur cette machine", "only workspace signed in on this machine")
         print(t("Espace du dépôt : %s (%s)", "Repository workspace: %s (%s)") % (slug, source))
         sec = load_secret(slug, host)
         if sec and sec["origin"] == o:
@@ -682,7 +876,7 @@ def cmd_later(args):
     return 0
 
 
-COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header}
+COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header, "only": cmd_only}
 
 
 def main(argv):
@@ -691,7 +885,7 @@ def main(argv):
             raise Fail("usage: ergana-auth.py <%s> ..." % "|".join(COMMANDS), 2)
         return COMMANDS[argv[0]](argv[1:])
     except Fail as e:
-        sys.stderr.write("ergana: %s\n" % e)
+        sys.stderr.write("".join("ergana: %s\n" % l for l in str(e).split("\n")))
         return e.code
     except KeyboardInterrupt:
         return 130

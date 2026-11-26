@@ -2,8 +2,8 @@
 # SessionStart: hand the agent its Claude Code session id and ask it to report its steps. The
 # server's instructions say the same, but agents seldom act on them alone (John, 19 Nov 2026).
 # No jq: the hook input is matched as text, and an id outside [A-Za-z0-9-]{1,128} prints nothing.
-# The workspace lines (DR-0029.D1 language, DR-0036.D1 offer, DR-0037.D1 confirmation) come before the
-# GitHub line, which stays the last one.
+# The workspace lines (DR-0029.D1 language, DR-0036.D1 named-workspace offer, DR-0041.D1 offer with no
+# .ergana, DR-0051.D1 no confirmation) come before the GitHub line, which stays the last one.
 input=$(cat)
 id=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9-]\{1,128\}\)".*/\1/p' | head -n 1)
 [ -n "$id" ] || exit 0
@@ -37,7 +37,7 @@ relay_key
 cwd=$(printf '%s' "$input" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
 here=$(cd "$(dirname "$0")" && pwd)
 
-# The repository's workspace and its source, the confirmation DR-0037.D1 still wants, and the sign-in offer.
+# The repository's workspace and its source, and the sign-in offer.
 workspace_lines() {
   [ -n "$cwd" ] && [ -d "$cwd" ] || return 0
   . "$here/ergana-repo.sh"
@@ -45,8 +45,8 @@ workspace_lines() {
   top=$(git_ rev-parse --show-toplevel)
   ergana_find
   case "${LANG:-}" in
-    fr*) fr=1; yes=Oui; no=Non; other=Autre; later="Plus tard" ;;
-    *) fr=0; yes=Yes; no=No; other=Other; later=Later ;;
+    fr*) fr=1; later="Plus tard" ;;
+    *) fr=0; later=Later ;;
   esac
   idx=$(ergana_index)
   marker=$(git_ rev-parse --path-format=absolute --git-path info/ergana-later)
@@ -62,22 +62,15 @@ workspace_lines() {
       if [ "$fr" = 1 ]; then src="fichier .ergana local"; else src="local .ergana file"; fi
     fi
     if [ "$fr" = 1 ]; then echo "Espace Ergana : $slug ($src)"; else echo "Ergana workspace: $slug ($src)"; fi
-    if ergana_needs_confirm; then
-      if [ "$fr" = 1 ]; then q="Envoyer ce dépôt à l'espace $slug ?"; else q="Send this repository to the $slug workspace?"; fi
-      echo "This repository's .ergana file, committed to git, names the $slug workspace, and nothing is sent to it until the person confirms. Before anything else, ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$yes\" first and \"$no\" second. A hook records their answer: never record it yourself. After \"$yes\", ask the person to reconnect ergana in /mcp, or to open a new session. After \"$no\", do not use Ergana's tools in this repository."
-    fi
     if [ "$offer" = 1 ] && ! grep -q " $slug\$" "$idx" 2>/dev/null; then
       echo "The $slug workspace has no sign-in on this machine. Ask the person with AskUserQuestion whether to sign in now, with the options \"$slug\" and \"$later\". On \"$slug\", start the /ergana:login skill for it. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
     fi
-  elif [ -z "$ergana" ] && [ "$offer" = 1 ] && [ -s "$idx" ]; then
-    names=
-    for n in $(sed 's/^[^ ]* //' "$idx" 2>/dev/null | grep -E '^[a-z0-9]{3,30}$'); do
-      case " $names " in *" $n "*) ;; *) names="$names $n" ;; esac
-    done
-    [ -n "$names" ] || return 0
-    opts=
-    for n in $names; do opts="$opts\"$n\", "; done
-    echo "This repository has no .ergana file, and workspaces are signed in on this machine. Ask the person with AskUserQuestion whether to link it to one, with the options ${opts}\"$other\" and \"$later\". On a workspace, start the /ergana:login skill for it; on \"$other\", ask which workspace. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
+  elif [ -z "$ergana" ] && [ -n "$top" ] && only=$(python3 -I "$auth" only 2>/dev/null) && [ -n "$only" ]; then
+    # DR-0057.D1: the machine's one workspace is named instead of the sign-in offer.
+    if [ "$fr" = 1 ]; then echo "Espace Ergana : $only (seul espace connecté sur cette machine)"; else echo "Ergana workspace: $only (only workspace signed in on this machine)"; fi
+  elif [ -z "$ergana" ] && [ "$offer" = 1 ] && [ -n "$top" ]; then
+    if [ "$fr" = 1 ]; then q="Se connecter à Ergana ?"; go="Se connecter"; else q="Sign in to Ergana?"; go="Sign in"; fi
+    echo "This repository has no .ergana file. Ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$go\" first and \"$later\" second. On \"$go\", start the /ergana:login skill with no argument. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
   fi
 }
 workspace_lines

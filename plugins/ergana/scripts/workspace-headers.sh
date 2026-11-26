@@ -6,17 +6,21 @@
 # local path, is never sent; nor is any other folder's name than the project's own: X-Ergana-Folder is
 # the project folder's name (the last segment, percent-encoded byte by byte), so a monorepo's part can
 # be told apart, and is left out for a home folder, a filesystem root, a folder directly under Users
-# or home, and, when a .ergana exists, until DR-0037.D1's confirmation is known
-# given within the budget. A .ergana file (workspace = <slug>, DR-0035.D1) in the project folder,
+# or home. A .ergana file (workspace = <slug>, DR-0035.D1) in the project folder,
 # else in the main checkout of a linked worktree (read without git from .git and commondir, then
 # with git), adds X-Ergana-Workspace and Accept-Language (fr when LANG starts with fr, else en); a
 # .ergana that is unreadable or malformed adds "Authorization: Bearer ergana-not-connected" instead,
 # never a silent fall back to the shared sign-in. A valid .ergana adds "Authorization: Bearer <token>" with
-# the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
-# stops a helper at 10 s), or ergana-not-connected when there is none, when the budget is spent, or when
-# DR-0037.D1 wants a confirmation not given yet (2+ connected workspaces and a .ergana git tracks whose
-# sha256 is not in ~/.config/ergana/trusted); that check runs once, before the folder and the token use
-# it, and a spent budget counts as not given. Without .ergana the output is unchanged. A hook cannot
+# the workspace's own token (ergana-auth.py header, what is left of 7 s: git's top level first, then the
+# token, the remote and branch calls last and only with 2 s of the 7 left, so the helper ends within about
+# 8 s whatever git does; Claude Code stops a helper at 10 s, DR-0056.D1), or ergana-not-connected when there
+# is none or the budget is spent (DR-0051.D1:
+# a committed .ergana applies like a local one, with no confirmation). Without .ergana the output is
+# unchanged, except that the machine's one signed-in workspace stands in for it (DR-0055.D1, see below): with two or
+# more, Bearer ergana-not-connected, X-Ergana-Workspace-File: missing and Accept-Language only. When a .ergana exists,
+# X-Ergana-Repo, -Branch, -Root-Hash and -Folder (DR-0039.D1) are sent only when the final Authorization is a
+# workspace token, decided after the token step: with Bearer ergana-not-connected the output is the workspace
+# slug (when valid), Accept-Language and that bearer, nothing else. A hook cannot
 # hand a command's output to an mcp_tool hook; a headersHelper runs at each MCP connection (session
 # start, reconnect), so the branch is the one at connection time.
 # Silent on any failure (not a git repository, no origin, git missing, over a second): it prints
@@ -27,10 +31,10 @@ t0=$(date +%s 2>/dev/null)
 dir=${1:-}
 case "$dir" in '' | *'${'*) dir=${CLAUDE_PROJECT_DIR:-$PWD} ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
-# git_ (each call cut off after about a second), the .ergana lookup and the confirmation check.
+# git_ (each call cut off after about a second), and the .ergana lookup.
 . "$here/ergana-repo.sh"
 
-# budget_left: $left, the whole seconds left of the 8 s (the clock counts whole seconds: one is held back), 0
+# budget_left: $left, the whole seconds left of the 7 s (the clock counts whole seconds: one is held back), 0
 # when there is no clock.
 budget_left() {
   left=0
@@ -64,12 +68,6 @@ remote() {
   esac
 }
 
-repo=$(remote "$(git_ remote get-url origin)")
-branch=$(git_ branch --show-current)
-# A branch outside printable ASCII, or with a quote or a backslash, is not sent (no escaping).
-printf '%s' "$branch" | LC_ALL=C grep -Eq '^[ -~]+$' && ! printf '%s' "$branch" | grep -q '["\\]' ||
-  branch=
-
 # The root's sha256 (git prints it with forward slashes, C:/... on Windows), or nothing.
 top=$(git_ rev-parse --show-toplevel)
 hash=
@@ -84,14 +82,80 @@ fi
 
 ergana_find
 
-# confirmed: 1 unless a .ergana exists and DR-0037.D1's confirmation is not known given within the budget.
-confirmed=1
-if [ -n "$ergana" ]; then
-  confirmed=0
+# The repository's headers go only with a workspace token (DR-0039.D1), or with no .ergana: the output is
+# built after the token step.
+slug=
+token=
+lang=en
+missing=
+case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
+# No .ergana (DR-0055.D1): the machine's one workspace for the origin decides, `ergana-auth.py header - <left>`
+# printing "<slug> <token>" (exit 0), or the slug alone (exit 1, no token); the output is then the one a .ergana
+# naming that slug gives. Two or more workspaces (exit 3): the not-connected bearer, the cause and the language,
+# nothing of the repository. None (exit 4), any other exit or a cut-off: no .ergana's output, unchanged.
+if [ -z "$ergana" ]; then
   budget_left
-  if [ "$left" -ge 1 ] && ! ergana_needs_confirm; then confirmed=1; fi
+  if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
+    if command -v perl >/dev/null 2>&1; then
+      res=$({ perl -e 'alarm shift; exec @ARGV or exit 1' "$left" python3 -I "$here/ergana-auth.py" header - "$left"; } 2>/dev/null; printf 'rc=%s' "$?")
+    else
+      res=$(python3 -I "$here/ergana-auth.py" header - "$left" 2>/dev/null; printf 'rc=%s' "$?")
+    fi
+    rc=${res##*rc=}
+    res=${res%rc=*}
+    case "$res" in *'
+') res=${res%?} ;; esac
+    case "$rc" in
+      3) ergana=none missing=1 ;;
+      0 | 1)
+        # one line, at most two fields, a valid slug, and a token only with exit 0
+        s=${res%% *}
+        t=
+        case "$res" in *' '*) t=${res#* } ;; esac
+        [ "$rc" = 0 ] && want=y || want=
+        have=
+        [ -n "$t" ] && have=y
+        case "$res" in *'
+'*) have=bad ;; esac
+        case "$t" in *' '*) have=bad ;; esac
+        if [ "$want" = "$have" ] && printf '%s' "$s" | LC_ALL=C grep -Eq '^[a-z0-9]{3,30}$'; then
+          ergana=none slug=$s token=$t
+        fi
+        ;;
+    esac
+  fi
 fi
-
+if [ -n "$ergana" ]; then
+  [ "$ergana" = none ] || slug=$(ergana_slug "$ergana")
+  # The workspace's token, within what is left of 7 s (the clock counts whole seconds: one is held back).
+  if [ -n "$slug" ] && [ -z "$token" ] && [ "$ergana" != none ]; then
+    budget_left
+    if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
+      if command -v perl >/dev/null 2>&1; then
+        token=$({ perl -e 'alarm shift; exec @ARGV or exit 1' "$left" python3 -I "$here/ergana-auth.py" header "$slug" "$left"; } 2>/dev/null)
+      else
+        token=$(python3 -I "$here/ergana-auth.py" header "$slug" "$left" 2>/dev/null)
+      fi
+    fi
+  fi
+  if [ "${#token}" -gt 4096 ] || ! printf '%s' "$token" | LC_ALL=C grep -Eq '^[A-Za-z0-9._~+/=-]+$'; then
+    token=
+  fi
+fi
+# The remote and branch calls go last, only when the output carries them (no .ergana, or a workspace token)
+# and at least 2 s of the 7 are left: the token step gets every second the git calls used to take.
+repo=
+branch=
+if [ -z "$ergana" ] || [ -n "$token" ]; then
+  budget_left
+  if [ "$left" -ge 2 ]; then
+    repo=$(remote "$(git_ remote get-url origin)")
+    branch=$(git_ branch --show-current)
+    # A branch outside printable ASCII, or with a quote or a backslash, is not sent (no escaping).
+    printf '%s' "$branch" | LC_ALL=C grep -Eq '^[ -~]+$' && ! printf '%s' "$branch" | grep -q '["\\]' ||
+      branch=
+  fi
+fi
 # folder: the project folder's name, percent-encoded outside [A-Za-z0-9._~-] one byte at a time (od),
 # or nothing for a home folder, a root or a folder directly under Users or home (any case).
 folder=
@@ -103,7 +167,7 @@ parent=${d%/*}
 parent=${parent##*/}
 parent=$(printf '%s' "$parent" | tr 'A-Z' 'a-z')
 name=${d##*/}
-if [ "$confirmed" = 1 ] && [ -n "$name" ] && [ "$d" != "$home" ] && [ "$d" != / ] &&
+if { [ -z "$ergana" ] || [ -n "$token" ]; } && [ -n "$name" ] && [ "$d" != "$home" ] && [ "$d" != / ] &&
   [ "$parent" != users ] && [ "$parent" != home ]; then
   for h in $(printf '%s' "$name" | LC_ALL=C od -An -v -tx1); do
     c=$((0x$h))
@@ -117,35 +181,16 @@ if [ "$confirmed" = 1 ] && [ -n "$name" ] && [ "$d" != "$home" ] && [ "$d" != / 
 fi
 
 out=
-[ -n "$repo" ] && out="\"X-Ergana-Repo\":\"$repo\""
-[ -n "$branch" ] && out="${out:+$out,}\"X-Ergana-Branch\":\"$branch\""
-[ -n "$hash" ] && out="${out:+$out,}\"X-Ergana-Root-Hash\":\"$hash\""
-[ -n "$folder" ] && out="${out:+$out,}\"X-Ergana-Folder\":\"$folder\""
+if [ -z "$ergana" ] || [ -n "$token" ]; then
+  [ -n "$repo" ] && out="\"X-Ergana-Repo\":\"$repo\""
+  [ -n "$branch" ] && out="${out:+$out,}\"X-Ergana-Branch\":\"$branch\""
+  [ -n "$hash" ] && out="${out:+$out,}\"X-Ergana-Root-Hash\":\"$hash\""
+  [ -n "$folder" ] && out="${out:+$out,}\"X-Ergana-Folder\":\"$folder\""
+fi
 if [ -n "$ergana" ]; then
-  slug=$(ergana_slug "$ergana")
-  if [ -n "$slug" ]; then
-    case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
-    out="${out:+$out,}\"X-Ergana-Workspace\":\"$slug\",\"Accept-Language\":\"$lang\""
-    # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
-    token=
-    if [ "$confirmed" = 1 ]; then
-      budget_left
-      if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
-        if command -v perl >/dev/null 2>&1; then
-          token=$({ perl -e 'alarm shift; exec @ARGV or exit 1' "$left" python3 -I "$here/ergana-auth.py" header "$slug" "$left"; } 2>/dev/null)
-        else
-          token=$(python3 -I "$here/ergana-auth.py" header "$slug" "$left" 2>/dev/null)
-        fi
-      fi
-    fi
-    if [ "${#token}" -le 4096 ] && printf '%s' "$token" | LC_ALL=C grep -Eq '^[A-Za-z0-9._~+/=-]+$'; then
-      out="$out,\"Authorization\":\"Bearer $token\""
-    else
-      out="$out,\"Authorization\":\"Bearer ergana-not-connected\""
-    fi
-  else
-    out="${out:+$out,}\"Authorization\":\"Bearer ergana-not-connected\""
-  fi
+  [ -n "$slug" ] && out="${out:+$out,}\"X-Ergana-Workspace\":\"$slug\",\"Accept-Language\":\"$lang\""
+  [ -n "$missing" ] && out="${out:+$out,}\"Accept-Language\":\"$lang\",\"X-Ergana-Workspace-File\":\"missing\""
+  out="${out:+$out,}\"Authorization\":\"Bearer ${token:-ergana-not-connected}\""
 fi
 printf '{%s}\n' "$out"
 exit 0

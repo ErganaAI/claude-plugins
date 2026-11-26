@@ -11,6 +11,9 @@ failed=0
 export HOME="$tmp/home" ERGANA_AUTH_TEST=1 ERGANA_AUTH_KEYCHAIN=0 GIT_CONFIG_GLOBAL=/dev/null
 unset ERGANA_ORIGIN
 mkdir "$HOME"
+# a HOME with no workspace: the no-.ergana cases that predate DR-0055.D1 run in it
+empty="$tmp/empty"
+mkdir "$empty"
 
 # expect <name> <got> <want>
 expect() {
@@ -144,8 +147,8 @@ for l in fr_FR.UTF-8:fr en_US.UTF-8:en :en 'x"y:en'; do
   has "lang[${l%:*}]" "$out" "\"Accept-Language\":\"${l##*:}\""
   valid "lang[${l%:*}]" "$out"
 done
-# Tokens (DR-0035.D1, DR-0037.D1): a stored token is sent as Authorization; without one, or when a committed
-# .ergana is not confirmed on a machine with 2+ workspaces, ergana-not-connected, never the shared sign-in.
+# Tokens (DR-0035.D1, DR-0051.D1): a stored token is sent as Authorization; without one, ergana-not-connected,
+# never the shared sign-in. A committed .ergana applies like a local one, with no confirmation.
 cfg="$HOME/.config/ergana"
 putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed in the index
   mkdir -p "$cfg/app.ergana.ai"
@@ -153,13 +156,6 @@ putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed
     >"$cfg/app.ergana.ai/$1"
   printf 'app.ergana.ai %s\n' "$1" >>"$cfg/workspaces"
 }
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -c1-64; else shasum -a 256 "$1" | cut -c1-64; fi; }
-trustline() { # <repo>: "<sha256 of the git common dir> <sha256 of its .ergana>"
-  c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
-  if command -v sha256sum >/dev/null 2>&1; then k=$(printf '%s' "$c" | sha256sum | cut -c1-64); else k=$(printf '%s' "$c" | shasum -a 256 | cut -c1-64); fi
-  printf '%s %s\n' "$k" "$(sha "$1/.ergana")"
-}
-trustfile() { echo "$HOME/.config/ergana/trusted"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 mk "$tmp/tok"
@@ -176,41 +172,35 @@ has token "$out" '"Accept-Language":'
 hasnt token "$out" 'not-connected'
 valid token "$out"
 mk "$tmp/tok-none"
-hasnt no-ergana-with-tokens "$("$helper" "$tmp/tok-none")" 'Authorization'
+hasnt no-ergana-with-tokens "$(HOME="$empty" "$helper" "$tmp/tok-none")" 'Authorization'
 
-# 2+ workspaces: an untracked .ergana is sent; a committed one only once confirmed for its exact content.
+# 2+ workspaces: an untracked or a committed .ergana is sent with its workspace's token, no confirmation.
 putsecret second
 has two-untracked "$("$helper" "$tmp/tok")" '"Authorization":"Bearer TOK-acme"'
+comtok() { # <name> <json>: the acme token and the four repository headers
+  has "$1" "$2" '"Authorization":"Bearer TOK-acme"'
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "$1 $hd" "$2" "$hd"; done
+}
 mk "$tmp/com"
+git -C "$tmp/com" remote add origin https://github.com/acme/web.git
 printf 'workspace = acme\n' >"$tmp/com/.ergana"
 git -C "$tmp/com" add .ergana
 git -C "$tmp/com" commit -q -m ergana
-out=$("$helper" "$tmp/com")
-has two-committed-unconfirmed "$out" '"Authorization":"Bearer ergana-not-connected"'
-hasnt two-committed-unconfirmed "$out" 'TOK-'
-# the former in-repository record (sha alone) confirms nothing
-oldrec=$(git -C "$tmp/com" rev-parse --path-format=absolute --git-path info/ergana-trusted)
-mkdir -p "$(dirname "$oldrec")"
-sha "$tmp/com/.ergana" >"$oldrec"
-has two-committed-old-record "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
-mkdir -p "$(dirname "$(trustfile "$tmp/com")")"
-trustline "$tmp/com" >"$(trustfile "$tmp/com")"
-has two-committed-confirmed "$("$helper" "$tmp/com")" '"Authorization":"Bearer TOK-acme"'
+comtok two-committed "$("$helper" "$tmp/com")"
 printf '# changed\n' >>"$tmp/com/.ergana"
 git -C "$tmp/com" commit -q -am changed
-has two-committed-modified "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
-# a linked worktree of that repository shares the repository's confirmation
+comtok two-committed-modified "$("$helper" "$tmp/com")"
+# a linked worktree of that repository
 (cd "$tmp/com" && git worktree add -q "$tmp/comwt" -b comwt)
-has two-committed-worktree "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer ergana-not-connected"'
-trustline "$tmp/com" >>"$(trustfile "$tmp/com")"
-has two-committed-worktree-confirmed "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer TOK-acme"'
-# committed, then dropped from the index only: still HEAD's, so still needs the confirmation
+comtok two-committed-worktree "$("$helper" "$tmp/comwt")"
+# committed, then dropped from the index only: still HEAD's
 mk "$tmp/com-rm"
+git -C "$tmp/com-rm" remote add origin https://github.com/acme/web.git
 printf 'workspace = acme\n' >"$tmp/com-rm/.ergana"
 git -C "$tmp/com-rm" add .ergana
 git -C "$tmp/com-rm" commit -q -m ergana
 git -C "$tmp/com-rm" rm -q --cached .ergana
-has two-in-head-not-index "$("$helper" "$tmp/com-rm")" '"Authorization":"Bearer ergana-not-connected"'
+comtok two-in-head-not-index "$("$helper" "$tmp/com-rm")"
 # a dangling .ergana symlink names no workspace
 mk "$tmp/dangling"
 ln -s "$tmp/nowhere" "$tmp/dangling/.ergana"
@@ -241,26 +231,120 @@ if [ $((t1 - t0)) -lt 8 ]; then echo "ok   slow-git in $((t1 - t0)) s"; else ech
 has slow-git "$out" '"Authorization":"Bearer TOK-acme"'
 valid slow-git "$out"
 
+# DR-0056.D1, one 7 s deadline: git's top level, then the token, the remote and branch calls last. A git taking
+# 0.8 s per call (it logs its arguments): the signed-in repository still gets its token within 9 s, and the helper
+# writes no token file of its own.
+mkdir -p "$tmp/sg/bin"
+cat >"$tmp/sg/bin/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/sg/log"
+sleep 0.8
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/sg/bin/git"
+mk "$tmp/sg/repo"
+git -C "$tmp/sg/repo" remote add origin https://github.com/acme/web.git
+printf 'workspace = acme\n' >"$tmp/sg/repo/.ergana"
+before=$(cd "$tmp/home3/.config/ergana" && ls -lR | grep -v '^total')
+: >"$tmp/sg/log"
+t0=$(date +%s)
+out=$(PATH="$tmp/sg/bin:$PATH" HOME="$tmp/home3" "$helper" "$tmp/sg/repo")
+t1=$(date +%s)
+if [ $((t1 - t0)) -lt 9 ]; then echo "ok   slow-git-repo in $((t1 - t0)) s"; else echo "FAIL slow-git-repo: $((t1 - t0)) s"; failed=1; fi
+has slow-git-repo "$out" '"Authorization":"Bearer TOK-acme"'
+expect slow-git-no-token-file "$(cd "$tmp/home3/.config/ergana" && ls -lR | grep -v '^total')" "$before"
+
+# A stored token needing a refresh against a local origin answering after 4 s, and the same slow git: the helper
+# still ends within 9 s, with no token, and never reaches the remote and branch calls.
+cat >"$tmp/sg/origin.py" <<'EOF'
+import sys, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self): self.send_response(404); self.end_headers()
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        time.sleep(4)
+        try: self.send_response(400); self.end_headers()
+        except OSError: pass
+s = ThreadingHTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+EOF
+python3 -I "$tmp/sg/origin.py" "$tmp/sg/port" &
+srv=$!
+while [ ! -s "$tmp/sg/port" ]; do sleep 0.1; done
+port=$(cat "$tmp/sg/port")
+mkdir -p "$tmp/home4/.config/ergana/127.0.0.1_$port"
+printf '{"access":"OLD","refresh":"r","expires_at":1,"origin":"http://127.0.0.1:%s"}' "$port" >"$tmp/home4/.config/ergana/127.0.0.1_$port/acme"
+printf '127.0.0.1:%s acme\n' "$port" >"$tmp/home4/.config/ergana/workspaces"
+: >"$tmp/sg/log"
+t0=$(date +%s)
+out=$(ERGANA_ORIGIN="http://127.0.0.1:$port" PATH="$tmp/sg/bin:$PATH" HOME="$tmp/home4" "$helper" "$tmp/sg/repo")
+t1=$(date +%s)
+kill $srv 2>/dev/null; wait $srv 2>/dev/null
+if [ $((t1 - t0)) -lt 9 ]; then echo "ok   slow-token in $((t1 - t0)) s"; else echo "FAIL slow-token: $((t1 - t0)) s"; failed=1; fi
+has slow-token "$out" '"Authorization":"Bearer ergana-not-connected"'
+hasnt slow-token "$out" 'X-Ergana-Repo'
+hasnt slow-token-no-remote-call "$(cat "$tmp/sg/log")" 'remote'
+hasnt slow-token-no-branch-call "$(cat "$tmp/sg/log")" 'branch'
+
+# Under 2 s left once the token is in hand: the remote and branch calls are skipped, the token still sent. A fake
+# date makes the elapsed time exact whatever the machine's load: the helper's start, then 5 s later at the token
+# step (2 s left for it), then 6 s later at the remote and branch step (1 s left). A fast git that logs its calls.
+mkdir -p "$tmp/sg/bin2"
+cat >"$tmp/sg/bin2/date" <<EOF
+#!/bin/sh
+[ "\$*" = +%s ] || exec $(command -v date) "\$@"
+n=\$((\$(cat "$tmp/sg/dates" 2>/dev/null || echo 0) + 1))
+echo \$n >"$tmp/sg/dates"
+case \$n in 1) o=0 ;; 2) o=5 ;; *) o=6 ;; esac
+echo \$((\$($(command -v date) +%s) + o))
+EOF
+cat >"$tmp/sg/bin2/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/sg/log"
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/sg/bin2/date" "$tmp/sg/bin2/git"
+: >"$tmp/sg/log"
+out=$(PATH="$tmp/sg/bin2:$PATH" HOME="$tmp/home3" "$helper" "$tmp/sg/repo")
+expect late-token-clock-reads "$(cat "$tmp/sg/dates")" 3
+has late-token "$out" '"Authorization":"Bearer TOK-acme"'
+hasnt late-token-no-repo "$out" 'X-Ergana-Repo'
+hasnt late-token-no-branch "$out" 'X-Ergana-Branch'
+has late-token-top-level-call "$(cat "$tmp/sg/log")" 'rev-parse --show-toplevel'
+hasnt late-token-no-remote-call "$(cat "$tmp/sg/log")" 'remote'
+hasnt late-token-no-branch-call "$(cat "$tmp/sg/log")" 'branch'
+
 # X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
-# or a root; none before a committed .ergana is confirmed (DR-0037.D1), a spent budget included.
+# or a root; none without a token within the budget (DR-0039.D1).
 mk "$tmp/mono"
-has folder "$("$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
+has folder "$(HOME="$empty" "$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
 mk "$tmp/données-clients"
-has folder-encoded "$("$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+has folder-encoded "$(HOME="$empty" "$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+# With no workspace signed in (HOME="$empty"), so that the repository's other headers are sent and only the
+# folder's exclusion can leave X-Ergana-Folder out (with two workspaces nothing of the repository goes).
 mk "$tmp/home/john"
-hasnt folder-user-home "$("$helper" "$tmp/home/john")" 'X-Ergana-Folder'
+out=$(HOME="$empty" "$helper" "$tmp/home/john")
+hasnt folder-user-home "$out" 'X-Ergana-Folder'
+has folder-user-home-hash "$out" '"X-Ergana-Root-Hash"'
 mkdir -p "$tmp/Users"
 mk "$tmp/Users/john"
-hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
-mk "$HOME"
-hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
-hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
-# two workspaces are connected here: a committed .ergana not in trusted sends no folder
-hasnt folder-unconfirmed "$("$helper" "$tmp/com-rm")" 'X-Ergana-Folder'
-# confirmed, the folder goes with the token
-has folder-confirmed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
-# a spent budget counts as unconfirmed, even with one workspace (which needs no confirmation): a date that
-# jumps 100 s after the helper's start leaves nothing of its 8 s
+out=$(HOME="$empty" "$helper" "$tmp/Users/john")
+hasnt folder-users "$out" 'X-Ergana-Folder'
+has folder-users-hash "$out" '"X-Ergana-Root-Hash"'
+mk "$tmp/h2"
+out=$(HOME="$tmp/h2" "$helper" "$tmp/h2")
+hasnt folder-home "$out" 'X-Ergana-Folder'
+has folder-home-hash "$out" '"X-Ergana-Root-Hash"'
+out=$(HOME="$empty" "$helper" /)
+hasnt folder-root "$out" 'X-Ergana-Folder'
+hasnt folder-root-auth "$out" 'Authorization'
+# a committed .ergana: the folder goes with the token
+has folder-committed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
+# no token within the budget: no repository headers. A date that jumps 100 s after the helper's start leaves
+# nothing of its 8 s
 mk "$tmp/slowcom"
 printf 'workspace = acme\n' >"$tmp/slowcom/.ergana"
 (cd "$tmp/slowcom" && git add .ergana && git commit -q -m ergana)
@@ -268,8 +352,129 @@ mkdir -p "$tmp/clock"
 printf '#!/bin/sh\nif [ -e "%s/seen" ]; then echo 1100; else : >"%s/seen"; echo 1000; fi\n' "$tmp/clock" "$tmp/clock" >"$tmp/clock/date"
 chmod +x "$tmp/clock/date"
 slowrun=$(PATH="$tmp/clock:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slowcom")
-hasnt folder-budget-spent "$slowrun" 'X-Ergana-Folder'
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "folder-budget-spent $hd" "$slowrun" "$hd"; done
 has folder-budget-spent "$slowrun" 'ergana-not-connected'
 # the same repository on the real clock sends the folder with the token
 has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergana-Folder":"slowcom"'
+
+# DR-0039.D1: the repository's headers go only with a workspace token, or with no .ergana.
+mko() { mk "$1" && git -C "$1" remote add origin https://github.com/acme/web.git; }
+gitless() { # <name> <json>: the token and the folder, none of what git supplies
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do hasnt "$1 $hd" "$2" "$hd"; done
+  has "$1 folder" "$2" X-Ergana-Folder
+  has "$1" "$2" '"Authorization":"Bearer TOK-acme"'
+  valid "$1" "$2"
+}
+norepo() { # <name> <json>: no repository header, the not-connected bearer
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "$1 $hd" "$2" "$hd"; done
+  has "$1 bearer" "$2" '"Authorization":"Bearer ergana-not-connected"'
+  hasnt "$1 token" "$2" 'TOK-'
+  valid "$1" "$2"
+}
+# two workspaces are connected here, none of them acme: a committed .ergana naming acme has no token
+mkdir -p "$tmp/home4/.config/ergana"
+cp -R "$cfg/app.ergana.ai" "$tmp/home4/.config/ergana/"
+rm "$tmp/home4/.config/ergana/app.ergana.ai/acme"
+printf 'app.ergana.ai second\napp.ergana.ai third\n' >"$tmp/home4/.config/ergana/workspaces"
+mko "$tmp/r-unc"
+printf 'workspace = acme\n' >"$tmp/r-unc/.ergana"
+git -C "$tmp/r-unc" add .ergana
+git -C "$tmp/r-unc" commit -q -m ergana
+out=$(HOME="$tmp/home4" "$helper" "$tmp/r-unc")
+norepo no-token-committed "$out"
+has no-token-committed "$out" '"X-Ergana-Workspace":"acme"'
+has no-token-committed "$out" '"Accept-Language":'
+mko "$tmp/r-notok"
+printf 'workspace = nobody\n' >"$tmp/r-notok/.ergana"
+norepo no-token-no-repo "$("$helper" "$tmp/r-notok")"
+mko "$tmp/r-bad"
+printf 'workspace = Bad\n' >"$tmp/r-bad/.ergana"
+out=$("$helper" "$tmp/r-bad")
+norepo malformed-no-repo "$out"
+hasnt malformed-no-repo "$out" 'X-Ergana-Workspace'
+mko "$tmp/r-budget"
+printf 'workspace = acme\n' >"$tmp/r-budget/.ergana"
+git -C "$tmp/r-budget" add .ergana
+git -C "$tmp/r-budget" commit -q -m ergana
+rm -f "$tmp/clock/seen"
+norepo budget-no-repo "$(PATH="$tmp/clock:$PATH" "$helper" "$tmp/r-budget")"
+# git cut off or refused: the .ergana still applies with its token (DR-0051.D1); git supplies no repo, branch or hash
+mko "$tmp/r-slow"
+printf 'workspace = acme\n' >"$tmp/r-slow/.ergana"
+gitless unknown-token "$(PATH="$tmp/slow/bin:$PATH" "$helper" "$tmp/r-slow")"
+mkdir -p "$tmp/refuse"
+printf '#!/bin/sh\nexit 128\n' >"$tmp/refuse/git"
+chmod +x "$tmp/refuse/git"
+mko "$tmp/r-ref"
+printf 'workspace = acme\n' >"$tmp/r-ref/.ergana"
+gitless git-refused-root-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref")"
+mkdir -p "$tmp/r-ref/apps/web"
+printf 'workspace = acme\n' >"$tmp/r-ref/apps/web/.ergana"
+gitless git-refused-subfolder-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
+# a token: all four headers; no .ergana: repo, branch, hash
+mko "$tmp/r-ok"
+printf 'workspace = acme\n' >"$tmp/r-ok/.ergana"
+out=$("$helper" "$tmp/r-ok")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "token-repo $hd" "$out" "$hd"; done
+has token-repo "$out" '"Authorization":"Bearer TOK-acme"'
+mko "$tmp/r-none"
+out=$(HOME="$empty" "$helper" "$tmp/r-none")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
+# DR-0055.D1: no .ergana, the machine's workspaces for the production host decide.
+# a throwaway HOME per case: <name> <slug with a token>... ; the slugs listed without a token follow "--"
+nohome() { # <name> <index lines...>: HOME with the index, tokens for the slugs of app.ergana.ai lines marked +
+  h="$tmp/nh-$1"; shift
+  mkdir -p "$h/.config/ergana/app.ergana.ai"
+  : >"$h/.config/ergana/workspaces"
+  for l in "$@"; do
+    case "$l" in
+      +*) printf 'app.ergana.ai %s\n' "${l#+}" >>"$h/.config/ergana/workspaces"
+        printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://app.ergana.ai"}' "${l#+}" "$(( $(date +%s) + 3600 ))" \
+          >"$h/.config/ergana/app.ergana.ai/${l#+}" ;;
+      *' '*) printf '%s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
+      *) printf 'app.ergana.ai %s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
+    esac
+  done
+}
+mko "$tmp/nw"
+nohome two +alpha +beta
+expect no-ergana-two-workspaces "$(HOME="$tmp/nh-two" LANG=C "$helper" "$tmp/nw")" \
+  '{"Accept-Language":"en","X-Ergana-Workspace-File":"missing","Authorization":"Bearer ergana-not-connected"}'
+nohome one +alpha
+out=$(HOME="$tmp/nh-one" "$helper" "$tmp/nw")
+has no-ergana-one-workspace "$out" '"Authorization":"Bearer TOK-alpha"'
+has no-ergana-one-workspace "$out" '"X-Ergana-Workspace":"alpha"'
+has no-ergana-one-workspace "$out" '"Accept-Language":'
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "no-ergana-one-workspace $hd" "$out" "$hd"; done
+valid no-ergana-one-workspace "$out"
+nohome notoken alpha
+out=$(HOME="$tmp/nh-notoken" "$helper" "$tmp/nw")
+has no-ergana-one-no-token "$out" '"Authorization":"Bearer ergana-not-connected"'
+has no-ergana-one-no-token "$out" '"X-Ergana-Workspace":"alpha"'
+has no-ergana-one-no-token "$out" '"Accept-Language":'
+norepo no-ergana-one-no-token "$out"
+nohome none
+out=$(HOME="$tmp/nh-none" "$helper" "$tmp/nw")
+hasnt no-ergana-none "$out" 'Authorization'
+hasnt no-ergana-none "$out" 'Workspace'
+has no-ergana-none "$out" 'X-Ergana-Repo'
+nohome otherhost "elsewhere.example beta" +alpha
+out=$(HOME="$tmp/nh-otherhost" "$helper" "$tmp/nw")
+has no-ergana-other-host-not-counted "$out" '"Authorization":"Bearer TOK-alpha"'
+nohome many +many
+out=$(HOME="$tmp/nh-many" "$helper" "$tmp/nw")
+has one-workspace-named-many "$out" '"Authorization":"Bearer TOK-many"'
+has one-workspace-named-many "$out" '"X-Ergana-Workspace":"many"'
+has one-workspace-named-many "$out" 'X-Ergana-Repo'
+# #31: one session's life. Claude Code runs the helper at the connection, before /ergana:login: the server's
+# handshake takes exactly this (the bearer and a valid slug, nothing about the repository). Once the login stored a
+# token, the helper's next run (Claude Code's, on a tool call's 401) carries it: no /mcp Reconnect in between.
+mko "$tmp/s31"
+printf 'workspace = late\n' >"$tmp/s31/.ergana"
+expect s31-before "$(LANG=C "$helper" "$tmp/s31")" \
+  '{"X-Ergana-Workspace":"late","Accept-Language":"en","Authorization":"Bearer ergana-not-connected"}'
+putsecret late
+out=$("$helper" "$tmp/s31")
+has s31-after "$out" '"Authorization":"Bearer TOK-late"'
+has s31-after "$out" '"X-Ergana-Repo":'
 exit $failed

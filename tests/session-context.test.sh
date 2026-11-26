@@ -28,7 +28,7 @@ check signed-out "echo '{\"hosts\":{}}'" 'GitHub: gh=signed_out'
 check failing 'exit 1' 'GitHub: gh=unknown'
 check slow 'sleep 5' 'GitHub: gh=unknown'
 check missing - 'GitHub: gh=missing'
-# The workspace of the repository (DR-0029.D1, DR-0037.D1) and the login proposal (DR-0036.D1).
+# The workspace of the repository (DR-0029.D1, DR-0051.D1) and the login proposal (DR-0036.D1).
 export HOME="$tmp/home" GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 idx="$HOME/.config/ergana/workspaces"
 mkdir -p "$HOME/.config/ergana"
@@ -37,6 +37,8 @@ mkdir "$wsbin"
 for tool in sed head cat rm mktemp sleep kill grep git cut tr dirname sha256sum shasum perl date wc tail; do
   t=$(command -v "$tool") && ln -s "$t" "$wsbin/$tool"
 done
+# the real interpreter, not a version manager's shim (it needs more than this PATH)
+ln -s "$(python3 -I -c 'import sys; print(sys.executable)')" "$wsbin/python3"
 
 # ctx <repo> <LANG>: the hook's output for a session in that folder
 ctx() { printf '{"session_id":"abc-1","cwd":"%s"}' "$1" | LANG=$2 PATH="$wsbin" /bin/sh "$script"; }
@@ -49,12 +51,6 @@ mkrepo() {
   if [ "$2" != none ]; then printf 'workspace = acme\n' >"$r/.ergana"; fi
   if [ "$2" = yes ]; then git -C "$r" add .ergana; fi
   git -C "$r" commit -q --allow-empty -m init
-}
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -c1-64; else shasum -a 256 "$1" | cut -c1-64; fi; }
-trustline() { # <repo>: "<sha256 of the git common dir> <sha256 of its .ergana>"
-  c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
-  if command -v sha256sum >/dev/null 2>&1; then k=$(printf '%s' "$c" | sha256sum | cut -c1-64); else k=$(printf '%s' "$c" | shasum -a 256 | cut -c1-64); fi
-  printf '%s %s\n' "$k" "$(sha "$1/.ergana")"
 }
 gitpath() { git -C "$1" rev-parse --path-format=absolute --git-path "$2"; }
 
@@ -69,33 +65,41 @@ out=$(ctx "$tmp/committed" fr_FR.UTF-8)
 hasnt one-space-no-confirmation "$out" "Envoyer ce dépôt"
 hasnt connected-no-proposal "$out" '/ergana:login'
 mkrepo none none
+printf 'app.ergana.ai acme\napp.ergana.ai other\n' >"$idx"  # two: DR-0057.D1 names only a single one
 out=$(ctx "$tmp/none" fr_FR.UTF-8)
 hasnt no-ergana-no-workspace-line "$out" 'Espace Ergana'
 last=$(printf '%s\n' "$out" | tail -n 1)
 if [ "$last" = 'GitHub: gh=missing' ]; then echo "ok   github-line-last"; else echo "FAIL github-line-last: $last"; failed=1; fi
 
-# DR-0037.D1: 2+ workspaces and a committed .ergana: the exact question, until the answer is recorded.
+# DR-0051.D1: 2+ workspaces and a committed .ergana: the workspace line, no confirmation question.
 printf 'app.ergana.ai acme\napp.ergana.ai other\n' >"$idx"
 out=$(ctx "$tmp/committed" fr_FR.UTF-8)
-has confirm-fr "$out" "Envoyer ce dépôt à l'espace acme ?"
-has confirm-fr-tool "$out" 'AskUserQuestion'
-has confirm-fr-mcp "$out" '/mcp'
-has confirm-fr-labels "$out" 'Oui'
+has two-committed-fr "$out" 'Espace Ergana : acme (fichier .ergana committé)'
+hasnt two-committed-fr-no-question "$out" 'Envoyer ce dépôt'
 out=$(ctx "$tmp/committed" en_US.UTF-8)
-has confirm-en "$out" 'Send this repository to the acme workspace?'
-has confirm-en-labels "$out" 'Yes'
-hasnt confirm-local "$(ctx "$tmp/local" fr_FR.UTF-8)" 'Envoyer ce dépôt'
-# the old in-repository record is not a confirmation any more
-mkdir -p "$(gitpath "$tmp/committed" info)"
-sha "$tmp/committed/.ergana" >"$(gitpath "$tmp/committed" info/ergana-trusted)"
-has confirm-old-record "$(ctx "$tmp/committed" fr_FR.UTF-8)" "Envoyer ce dépôt à l'espace acme ?"
-trustline "$tmp/committed" >"$HOME/.config/ergana/trusted"
-hasnt confirmed "$(ctx "$tmp/committed" fr_FR.UTF-8)" 'Envoyer ce dépôt'
-printf '# edit\n' >>"$tmp/committed/.ergana"
-has confirm-after-edit "$(ctx "$tmp/committed" fr_FR.UTF-8)" "Envoyer ce dépôt à l'espace acme ?"
+has two-committed-en "$out" 'Ergana workspace: acme (committed .ergana file)'
+hasnt two-committed-en-no-question "$out" 'Send this repository'
+# no token for the slug: the sign-in offer
+printf 'app.ergana.ai other\napp.ergana.ai third\n' >"$idx"
+out=$(ctx "$tmp/committed" en_US.UTF-8)
+has two-committed-no-token-offer "$out" 'has no sign-in on this machine'
+hasnt two-committed-no-token-no-question "$out" 'Send this repository'
 
-# DR-0036.D1: /ergana:login is offered for a .ergana without token, or with no .ergana when the machine holds
-# a token, unless "Plus tard" was chosen for this repository.
+# DR-0057.D1: no .ergana and exactly one workspace on the origin's host: it is named, no offer.
+mkrepo single none
+printf 'app.ergana.ai solo\napp.ergana.ai solo\nelsewhere.example other\n' >"$idx"
+out=$(ctx "$tmp/single" fr_FR.UTF-8)
+has one-workspace-fr "$out" 'Espace Ergana : solo (seul espace connecté sur cette machine)'
+hasnt one-workspace-fr-no-offer "$out" 'Se connecter à Ergana ?'
+out=$(ctx "$tmp/single" en_US.UTF-8)
+has one-workspace-en "$out" 'Ergana workspace: solo (only workspace signed in on this machine)'
+hasnt one-workspace-en-no-offer "$out" 'Sign in to Ergana?'
+printf 'app.ergana.ai solo\napp.ergana.ai duo\n' >"$idx"
+out=$(ctx "$tmp/single" fr_FR.UTF-8)
+has two-workspaces "$out" 'Se connecter à Ergana ?'
+hasnt two-workspaces-no-naming "$out" 'seul espace'
+
+# DR-0036.D1 / DR-0041.D1: /ergana:login is offered for a .ergana without token, or with no .ergana in a git repository, unless "Plus tard" was chosen for this repository.
 rm -f "$idx"
 mkrepo notoken no
 out=$(ctx "$tmp/notoken" fr_FR.UTF-8)
@@ -105,15 +109,23 @@ has offer-ergana-no-token-slug "$out" 'acme'
 printf 'app.ergana.ai other\n' >"$idx"
 has offer-ergana-other-token "$(ctx "$tmp/notoken" fr_FR.UTF-8)" '/ergana:login'
 mkrepo bare none
-out=$(ctx "$tmp/bare" fr_FR.UTF-8)
-has offer-bare "$out" '/ergana:login'
-has offer-bare-space "$out" 'other'
-has offer-bare-autre "$out" 'Autre'
-has offer-bare-later "$out" 'Plus tard'
-has offer-bare-marker "$out" 'ergana-auth.py" later'
-has offer-bare-en "$(ctx "$tmp/bare" en_US.UTF-8)" 'Later'
 rm -f "$idx"
-hasnt bare-no-token-no-offer "$(ctx "$tmp/bare" fr_FR.UTF-8)" '/ergana:login'
+out=$(ctx "$tmp/bare" fr_FR.UTF-8)
+has offer-bare-empty "$out" 'Se connecter à Ergana ?'
+has offer-bare-empty-go "$out" '"Se connecter" first'
+has offer-bare-empty-later "$out" '"Plus tard" second'
+has offer-bare-empty-login "$out" '/ergana:login skill with no argument'
+has offer-bare-marker "$out" 'ergana-auth.py" later'
+out=$(ctx "$tmp/bare" en_US.UTF-8)
+has offer-bare-en "$out" 'Sign in to Ergana?'
+has offer-bare-en-go "$out" '"Sign in" first'
+has offer-bare-en-later "$out" '"Later" second'
+printf 'app.ergana.ai other\napp.ergana.ai third\n' >"$idx"
+out=$(ctx "$tmp/bare" fr_FR.UTF-8)
+has offer-bare-ws "$out" 'Se connecter à Ergana ?'
+hasnt offer-bare-ws-slug "$out" '"other"'
+mkdir "$tmp/nogit"
+hasnt offer-outside-git "$(ctx "$tmp/nogit" fr_FR.UTF-8)" '/ergana:login'
 printf 'app.ergana.ai other\n' >"$idx"
 for n in bare notoken; do
   mkdir -p "$(dirname "$(gitpath "$tmp/$n" info/ergana-later)")"

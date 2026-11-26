@@ -9,7 +9,7 @@
    /plugin install ergana@ergana
    ```
 
-2. Run `/mcp`, select `ergana` and choose Authenticate. Sign in with your company's Google Workspace account.
+2. Run `/mcp`, choose `plugin:ergana:ergana`, then `Authenticate`. Sign in with your company's Google Workspace account.
 
 3. Turn on updates: run `/plugin`, open the **Marketplaces** tab, select `ergana` and turn auto-update on. Claude
    Code does not update a plugin from this marketplace otherwise. With it on, a new version installs during a
@@ -49,7 +49,7 @@ too.
 | `/ergana:review` | Runs an independent review of the branch's change, security included, before it lands. |
 | `/ergana:add-decision [the decision, in your words]` | Writes one of the team's decisions, tries it on this repository's code and records it in the catalogue. |
 | `/ergana:tracking` | Sets where this repository's tickets go, the GitHub board and columns that show them, and their issue types. |
-| `/ergana:login [workspace]` | Signs in to an Ergana workspace in the browser and links this repository to it. |
+| `/ergana:login [workspace]` | Signs in to Ergana in the browser; the account chosen there decides the workspace, and this repository is linked to it. |
 | `/ergana:status` | Shows which workspace this repository is linked to and whether it is signed in on this machine. |
 | `/ergana:logout [workspace]` | Signs out of a workspace on this machine, and the repository stays linked to it. |
 
@@ -75,13 +75,32 @@ Besides the tool calls, a session sends Ergana:
 - hashes of the checkout and of its changes, never the code itself.
 
 From 0.15.0 no other absolute path leaves the machine.
+From 0.17.0 the repository's headers (origin, branch, root hash, folder name) go only with a workspace token, or when
+the repository has no `.ergana`; with `Authorization: Bearer ergana-not-connected` a session sends only the workspace
+slug and the language.
+From 0.19.4 a repository with no `.ergana` never falls back on Claude Code's own sign-in for the server, which is
+shared by every repository on the machine: with the machine's one signed-in workspace it uses that workspace, named
+at session start and by `/ergana:status` (« seul espace connecté sur cette machine »); with two or more it sends
+`Authorization: Bearer ergana-not-connected`, `X-Ergana-Workspace-File: missing` and the language only, so tool calls
+are refused with the cause in one line and session start offers the sign-in; with none, nothing changes. The token
+step runs before the repository's other git calls, within one 7 s deadline (Claude Code stops the helper at 10 s).
 
 ## One sign-in per workspace
 
-`/ergana:login` signs in to one workspace in the machine's default browser (OAuth with PKCE, the client `ergana-cli`),
-writes `.ergana` (`workspace = <slug>`) at the repository's root and lists it in `.git/info/exclude`. `/ergana:status`
+`/ergana:login` opens the machine's default browser at once (OAuth with PKCE, the client `ergana-cli`), with no
+question: the account chosen there decides the workspace. The token is kept under that workspace and, when the
+repository has no `.ergana`, one is written (`workspace = <slug>`) at its root and listed in `.git/info/exclude`. When
+the repository's `.ergana`, or the optional argument, names another workspace, the sign-in is refused in one line and
+nothing is stored. `/ergana:status`
 shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
-token and removes it (`.ergana` stays). After a login, reconnect ergana in `/mcp` or open a new session.
+token and removes it (`.ergana` stays). From 0.19.3 the session that ran the login uses the new token from its next tool call, with no `/mcp` step: the server
+lets `ergana-not-connected` through the connection and the tool list and refuses only tool calls, on which Claude Code
+runs the headers helper again and retries (#31). Only if a call still fails, in `/mcp`, choose `plugin:ergana:ergana`,
+then `Reconnect`.
+
+From 0.19.0 the browser tab returns to a page of the sign-in's last step: connected, with the workspace's name, or
+nothing connected, with the reason and `/ergana:login` to copy. The page is served by the script on `127.0.0.1`,
+loads nothing from the network and runs only its Copy button, under a nonce Content-Security-Policy.
 
 The token is kept per workspace: in the macOS Keychain (service `ergana`, account `<slug>@<host>`), else in
 `~/.config/ergana/<host>/<slug>` (mode 0600). `~/.config/ergana/workspaces` lists the connected workspaces, one
@@ -94,20 +113,13 @@ A `.ergana` file, in the project folder or in the main checkout of a linked work
 it does not), makes the MCP headers helper (`scripts/workspace-headers.sh`) send `X-Ergana-Workspace`, `Accept-Language`
 and `Authorization: Bearer <the workspace's token>`. The token is renewed by the helper itself when it expires within
 5 minutes, under a lock so that two sessions renew it once; the whole helper stays under 8 s (Claude Code stops it at
-10 s). With no usable token, a `.ergana` that is malformed, or a committed `.ergana` not yet confirmed (below), the
-helper sends `Authorization: Bearer ergana-not-connected` and never falls back to the shared sign-in. A repository with
-no `.ergana` keeps the shared sign-in.
+10 s). With no usable token or a `.ergana` that is malformed, the helper sends `Authorization: Bearer
+ergana-not-connected` and never falls back to the shared sign-in. A repository with no `.ergana` keeps the shared
+sign-in.
 
-On a machine with two or more connected workspaces, a `.ergana` committed to git is sent only after the person
-confirmed it once for this repository, machine and file content: the session start asks « Envoyer ce dépôt à l'espace
-<slug> ? » (or "Send this repository to the <slug> workspace?") with `AskUserQuestion`, and a PostToolUse hook
-(`scripts/trust-answer.sh`) records a line in `~/.config/ergana/trusted` (mode 0600, folder 0700), outside the repository:
-the sha256 of the absolute git common dir path, a space, and the sha256 of the file content, when the answer is the
-agreeing option. A `.ergana` counts as committed when it is in the index or still in `HEAD`. That file only guards
-against a silent pick: an agent with an unrestricted shell on the machine could still write it, and the question does not
-protect against a compromised local shell. The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
-`.ergana` with no token, or for no `.ergana` when a workspace is connected; « Plus tard » is remembered in
-`.git/info/ergana-later`.
+A committed `.ergana` applies like a local one, with no confirmation (DR-0051.D1). The session start names the
+workspace and where the link comes from, and offers `/ergana:login` for a `.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
+Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/info/ergana-later`.
 
 ## Tests
 
@@ -115,7 +127,6 @@ CI (`.github/workflows/ci.yml`) runs every `tests/*.test.py` and `tests/*.test.s
 
 ```
 python3 tests/ergana-auth.test.py
-sh tests/trust-answer.test.sh
 sh tests/workspace-headers.test.sh
 sh tests/session-context.test.sh
 sh tests/fingerprint.test.sh
