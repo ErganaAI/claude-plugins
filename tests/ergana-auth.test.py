@@ -652,7 +652,10 @@ class FileStoreTest(Base):
 
     # -- F5: the loopback server
     def _stub(self, body):
-        p = os.path.join(self.bin, "open")
+        for name in ("open", "xdg-open"):  # the browser opener is xdg-open on Linux
+            self._write_stub(os.path.join(self.bin, name), body)
+
+    def _write_stub(self, p, body):
         with open(p, "w") as f:
             f.write("#!/usr/bin/env python3\nimport os, sys, socket, urllib.request, urllib.parse, urllib.error\n"
                     "url = sys.argv[1]\nlog = open(os.environ['OPEN_LOG'], 'a')\n"
