@@ -37,6 +37,8 @@ mkdir "$wsbin"
 for tool in sed head cat rm mktemp sleep kill grep git cut tr dirname sha256sum shasum perl date wc tail; do
   t=$(command -v "$tool") && ln -s "$t" "$wsbin/$tool"
 done
+# the real interpreter, not a version manager's shim (it needs more than this PATH)
+ln -s "$(python3 -I -c 'import sys; print(sys.executable)')" "$wsbin/python3"
 
 # ctx <repo> <LANG>: the hook's output for a session in that folder
 ctx() { printf '{"session_id":"abc-1","cwd":"%s"}' "$1" | LANG=$2 PATH="$wsbin" /bin/sh "$script"; }
@@ -63,6 +65,7 @@ out=$(ctx "$tmp/committed" fr_FR.UTF-8)
 hasnt one-space-no-confirmation "$out" "Envoyer ce dépôt"
 hasnt connected-no-proposal "$out" '/ergana:login'
 mkrepo none none
+printf 'app.ergana.ai acme\napp.ergana.ai other\n' >"$idx"  # two: DR-0057.D1 names only a single one
 out=$(ctx "$tmp/none" fr_FR.UTF-8)
 hasnt no-ergana-no-workspace-line "$out" 'Espace Ergana'
 last=$(printf '%s\n' "$out" | tail -n 1)
@@ -81,6 +84,20 @@ printf 'app.ergana.ai other\napp.ergana.ai third\n' >"$idx"
 out=$(ctx "$tmp/committed" en_US.UTF-8)
 has two-committed-no-token-offer "$out" 'has no sign-in on this machine'
 hasnt two-committed-no-token-no-question "$out" 'Send this repository'
+
+# DR-0057.D1: no .ergana and exactly one workspace on the origin's host: it is named, no offer.
+mkrepo single none
+printf 'app.ergana.ai solo\napp.ergana.ai solo\nelsewhere.example other\n' >"$idx"
+out=$(ctx "$tmp/single" fr_FR.UTF-8)
+has one-workspace-fr "$out" 'Espace Ergana : solo (seul espace connecté sur cette machine)'
+hasnt one-workspace-fr-no-offer "$out" 'Se connecter à Ergana ?'
+out=$(ctx "$tmp/single" en_US.UTF-8)
+has one-workspace-en "$out" 'Ergana workspace: solo (only workspace signed in on this machine)'
+hasnt one-workspace-en-no-offer "$out" 'Sign in to Ergana?'
+printf 'app.ergana.ai solo\napp.ergana.ai duo\n' >"$idx"
+out=$(ctx "$tmp/single" fr_FR.UTF-8)
+has two-workspaces "$out" 'Se connecter à Ergana ?'
+hasnt two-workspaces-no-naming "$out" 'seul espace'
 
 # DR-0036.D1 / DR-0041.D1: /ergana:login is offered for a .ergana without token, or with no .ergana in a git repository, unless "Plus tard" was chosen for this repository.
 rm -f "$idx"
@@ -103,7 +120,7 @@ out=$(ctx "$tmp/bare" en_US.UTF-8)
 has offer-bare-en "$out" 'Sign in to Ergana?'
 has offer-bare-en-go "$out" '"Sign in" first'
 has offer-bare-en-later "$out" '"Later" second'
-printf 'app.ergana.ai other\n' >"$idx"
+printf 'app.ergana.ai other\napp.ergana.ai third\n' >"$idx"
 out=$(ctx "$tmp/bare" fr_FR.UTF-8)
 has offer-bare-ws "$out" 'Se connecter à Ergana ?'
 hasnt offer-bare-ws-slug "$out" '"other"'

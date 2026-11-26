@@ -1140,6 +1140,19 @@ class FileStoreTest(Base):
         self.assertNotIn("SECRET-ACCESS-VALUE", r.stdout + r.stderr)
         self.assertNotIn("REFRESH-OLD", r.stdout + r.stderr)
 
+    def test_status_names_the_one_workspace_without_ergana(self):  # DR-0057.D1
+        repo = self.repo()
+        self.put(access="SECRET-ACCESS-VALUE")
+        r = self.run_auth(["status"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("acme", r.stdout)
+        self.assertIn("only workspace signed in on this machine", r.stdout)
+        self.assertNotIn("No .ergana", r.stdout)
+        self.assertNotIn("SECRET-ACCESS-VALUE", r.stdout + r.stderr)
+        self.put(slug="second")
+        r = self.run_auth(["status"], cwd=repo)
+        self.assertIn("No .ergana file", r.stdout)
+
     def test_later_writes_marker(self):
         repo = self.repo()
         r = self.run_auth(["later"], cwd=repo)

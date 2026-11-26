@@ -708,6 +708,27 @@ def usable(sec, o):
     return bool(sec) and sec["origin"] == o
 
 
+def host_slugs(host):
+    """The workspaces of that host in the index, without duplicates."""
+    slugs = []
+    for l in index_lines():
+        f = l.split(" ")
+        if len(f) == 2 and f[0] == host and SLUG_RE.fullmatch(f[1]) and f[1] not in slugs:
+            slugs.append(f[1])
+    return slugs
+
+
+def cmd_only(args):
+    """Print the origin's one workspace from the index (no network); exit 3 when there are 0 or 2+."""
+    if args:
+        raise Fail("usage: ergana-auth.py only", 2)
+    slugs = host_slugs(host_of(origin()))
+    if len(slugs) != 1:
+        return 3
+    print(slugs[0])
+    return 0
+
+
 def cmd_header(args):
     start = time.monotonic()
     if len(args) != 2:
@@ -723,11 +744,7 @@ def cmd_header(args):
         sys.stdout.write(header_token(check_slug(args[0]), host, o, deadline) + "\n")
         return 0
     # No .ergana (DR-0055.D1): the origin's one workspace on this machine, "<slug> <token>" on one line.
-    slugs = []
-    for l in index_lines():
-        f = l.split(" ")
-        if len(f) == 2 and f[0] == host and SLUG_RE.fullmatch(f[1]) and f[1] not in slugs:
-            slugs.append(f[1])
+    slugs = host_slugs(host)
     if len(slugs) != 1:
         return 3 if slugs else 4
     try:
@@ -817,9 +834,14 @@ def cmd_status(args):
     slug, path, tracked = repo_slug()
     o = origin()
     host = host_of(o)
-    if slug:
-        source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
-            t("fichier .ergana local", "local .ergana file")
+    only = host_slugs(host) if not slug else []
+    if slug or len(only) == 1:
+        if slug:
+            source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
+                t("fichier .ergana local", "local .ergana file")
+        else:  # DR-0057.D1
+            slug = only[0]
+            source = t("seul espace connecté sur cette machine", "only workspace signed in on this machine")
         print(t("Espace du dépôt : %s (%s)", "Repository workspace: %s (%s)") % (slug, source))
         sec = load_secret(slug, host)
         if sec and sec["origin"] == o:
@@ -854,7 +876,7 @@ def cmd_later(args):
     return 0
 
 
-COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header}
+COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header, "only": cmd_only}
 
 
 def main(argv):
