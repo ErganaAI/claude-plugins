@@ -50,12 +50,6 @@ mkrepo() {
   if [ "$2" = yes ]; then git -C "$r" add .ergana; fi
   git -C "$r" commit -q --allow-empty -m init
 }
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -c1-64; else shasum -a 256 "$1" | cut -c1-64; fi; }
-trustline() { # <repo>: "<sha256 of the git common dir> <sha256 of its .ergana>"
-  c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
-  if command -v sha256sum >/dev/null 2>&1; then k=$(printf '%s' "$c" | sha256sum | cut -c1-64); else k=$(printf '%s' "$c" | shasum -a 256 | cut -c1-64); fi
-  printf '%s %s\n' "$k" "$(sha "$1/.ergana")"
-}
 gitpath() { git -C "$1" rev-parse --path-format=absolute --git-path "$2"; }
 
 printf 'app.ergana.ai acme\n' >"$idx"
@@ -74,28 +68,19 @@ hasnt no-ergana-no-workspace-line "$out" 'Espace Ergana'
 last=$(printf '%s\n' "$out" | tail -n 1)
 if [ "$last" = 'GitHub: gh=missing' ]; then echo "ok   github-line-last"; else echo "FAIL github-line-last: $last"; failed=1; fi
 
-# DR-0037.D1: 2+ workspaces and a committed .ergana: the exact question, until the answer is recorded.
+# DR-0051.D1: 2+ workspaces and a committed .ergana: the workspace line, no confirmation question.
 printf 'app.ergana.ai acme\napp.ergana.ai other\n' >"$idx"
 out=$(ctx "$tmp/committed" fr_FR.UTF-8)
-has confirm-fr "$out" "Envoyer ce dépôt à l'espace acme ?"
-has confirm-fr-tool "$out" 'AskUserQuestion'
-has confirm-fr-mcp "$out" 'plugin:ergana:ergana'
-has confirm-fr-reconnect "$out" 'Reconnect'
-has confirm-fr-labels "$out" 'Oui'
+has two-committed-fr "$out" 'Espace Ergana : acme (fichier .ergana committé)'
+hasnt two-committed-fr-no-question "$out" 'Envoyer ce dépôt'
 out=$(ctx "$tmp/committed" en_US.UTF-8)
-has confirm-en "$out" 'Send this repository to the acme workspace?'
-has confirm-en-labels "$out" 'Yes'
-has confirm-en-mcp "$out" 'plugin:ergana:ergana'
-has confirm-en-reconnect "$out" 'Reconnect'
-hasnt confirm-local "$(ctx "$tmp/local" fr_FR.UTF-8)" 'Envoyer ce dépôt'
-# the old in-repository record is not a confirmation any more
-mkdir -p "$(gitpath "$tmp/committed" info)"
-sha "$tmp/committed/.ergana" >"$(gitpath "$tmp/committed" info/ergana-trusted)"
-has confirm-old-record "$(ctx "$tmp/committed" fr_FR.UTF-8)" "Envoyer ce dépôt à l'espace acme ?"
-trustline "$tmp/committed" >"$HOME/.config/ergana/trusted"
-hasnt confirmed "$(ctx "$tmp/committed" fr_FR.UTF-8)" 'Envoyer ce dépôt'
-printf '# edit\n' >>"$tmp/committed/.ergana"
-has confirm-after-edit "$(ctx "$tmp/committed" fr_FR.UTF-8)" "Envoyer ce dépôt à l'espace acme ?"
+has two-committed-en "$out" 'Ergana workspace: acme (committed .ergana file)'
+hasnt two-committed-en-no-question "$out" 'Send this repository'
+# no token for the slug: the sign-in offer
+printf 'app.ergana.ai other\napp.ergana.ai third\n' >"$idx"
+out=$(ctx "$tmp/committed" en_US.UTF-8)
+has two-committed-no-token-offer "$out" 'has no sign-in on this machine'
+hasnt two-committed-no-token-no-question "$out" 'Send this repository'
 
 # DR-0036.D1 / DR-0041.D1: /ergana:login is offered for a .ergana without token, or with no .ergana in a git repository, unless "Plus tard" was chosen for this repository.
 rm -f "$idx"

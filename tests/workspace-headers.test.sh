@@ -144,8 +144,8 @@ for l in fr_FR.UTF-8:fr en_US.UTF-8:en :en 'x"y:en'; do
   has "lang[${l%:*}]" "$out" "\"Accept-Language\":\"${l##*:}\""
   valid "lang[${l%:*}]" "$out"
 done
-# Tokens (DR-0035.D1, DR-0037.D1): a stored token is sent as Authorization; without one, or when a committed
-# .ergana is not confirmed on a machine with 2+ workspaces, ergana-not-connected, never the shared sign-in.
+# Tokens (DR-0035.D1, DR-0051.D1): a stored token is sent as Authorization; without one, ergana-not-connected,
+# never the shared sign-in. A committed .ergana applies like a local one, with no confirmation.
 cfg="$HOME/.config/ergana"
 putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed in the index
   mkdir -p "$cfg/app.ergana.ai"
@@ -153,13 +153,6 @@ putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed
     >"$cfg/app.ergana.ai/$1"
   printf 'app.ergana.ai %s\n' "$1" >>"$cfg/workspaces"
 }
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -c1-64; else shasum -a 256 "$1" | cut -c1-64; fi; }
-trustline() { # <repo>: "<sha256 of the git common dir> <sha256 of its .ergana>"
-  c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
-  if command -v sha256sum >/dev/null 2>&1; then k=$(printf '%s' "$c" | sha256sum | cut -c1-64); else k=$(printf '%s' "$c" | shasum -a 256 | cut -c1-64); fi
-  printf '%s %s\n' "$k" "$(sha "$1/.ergana")"
-}
-trustfile() { echo "$HOME/.config/ergana/trusted"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 mk "$tmp/tok"
@@ -178,39 +171,33 @@ valid token "$out"
 mk "$tmp/tok-none"
 hasnt no-ergana-with-tokens "$("$helper" "$tmp/tok-none")" 'Authorization'
 
-# 2+ workspaces: an untracked .ergana is sent; a committed one only once confirmed for its exact content.
+# 2+ workspaces: an untracked or a committed .ergana is sent with its workspace's token, no confirmation.
 putsecret second
 has two-untracked "$("$helper" "$tmp/tok")" '"Authorization":"Bearer TOK-acme"'
+comtok() { # <name> <json>: the acme token and the four repository headers
+  has "$1" "$2" '"Authorization":"Bearer TOK-acme"'
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "$1 $hd" "$2" "$hd"; done
+}
 mk "$tmp/com"
+git -C "$tmp/com" remote add origin https://github.com/acme/web.git
 printf 'workspace = acme\n' >"$tmp/com/.ergana"
 git -C "$tmp/com" add .ergana
 git -C "$tmp/com" commit -q -m ergana
-out=$("$helper" "$tmp/com")
-has two-committed-unconfirmed "$out" '"Authorization":"Bearer ergana-not-connected"'
-hasnt two-committed-unconfirmed "$out" 'TOK-'
-# the former in-repository record (sha alone) confirms nothing
-oldrec=$(git -C "$tmp/com" rev-parse --path-format=absolute --git-path info/ergana-trusted)
-mkdir -p "$(dirname "$oldrec")"
-sha "$tmp/com/.ergana" >"$oldrec"
-has two-committed-old-record "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
-mkdir -p "$(dirname "$(trustfile "$tmp/com")")"
-trustline "$tmp/com" >"$(trustfile "$tmp/com")"
-has two-committed-confirmed "$("$helper" "$tmp/com")" '"Authorization":"Bearer TOK-acme"'
+comtok two-committed "$("$helper" "$tmp/com")"
 printf '# changed\n' >>"$tmp/com/.ergana"
 git -C "$tmp/com" commit -q -am changed
-has two-committed-modified "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
-# a linked worktree of that repository shares the repository's confirmation
+comtok two-committed-modified "$("$helper" "$tmp/com")"
+# a linked worktree of that repository
 (cd "$tmp/com" && git worktree add -q "$tmp/comwt" -b comwt)
-has two-committed-worktree "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer ergana-not-connected"'
-trustline "$tmp/com" >>"$(trustfile "$tmp/com")"
-has two-committed-worktree-confirmed "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer TOK-acme"'
-# committed, then dropped from the index only: still HEAD's, so still needs the confirmation
+comtok two-committed-worktree "$("$helper" "$tmp/comwt")"
+# committed, then dropped from the index only: still HEAD's
 mk "$tmp/com-rm"
+git -C "$tmp/com-rm" remote add origin https://github.com/acme/web.git
 printf 'workspace = acme\n' >"$tmp/com-rm/.ergana"
 git -C "$tmp/com-rm" add .ergana
 git -C "$tmp/com-rm" commit -q -m ergana
 git -C "$tmp/com-rm" rm -q --cached .ergana
-has two-in-head-not-index "$("$helper" "$tmp/com-rm")" '"Authorization":"Bearer ergana-not-connected"'
+comtok two-in-head-not-index "$("$helper" "$tmp/com-rm")"
 # a dangling .ergana symlink names no workspace
 mk "$tmp/dangling"
 ln -s "$tmp/nowhere" "$tmp/dangling/.ergana"
@@ -242,7 +229,7 @@ has slow-git "$out" '"Authorization":"Bearer TOK-acme"'
 valid slow-git "$out"
 
 # X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
-# or a root; none before a committed .ergana is confirmed (DR-0037.D1), a spent budget included.
+# or a root; none without a token within the budget (DR-0039.D1).
 mk "$tmp/mono"
 has folder "$("$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
 mk "$tmp/données-clients"
@@ -255,12 +242,10 @@ hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
 mk "$HOME"
 hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
 hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
-# two workspaces are connected here: a committed .ergana not in trusted sends no folder
-hasnt folder-unconfirmed "$("$helper" "$tmp/com-rm")" 'X-Ergana-Folder'
-# confirmed, the folder goes with the token
-has folder-confirmed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
-# a spent budget counts as unconfirmed, even with one workspace (which needs no confirmation): a date that
-# jumps 100 s after the helper's start leaves nothing of its 8 s
+# a committed .ergana with two workspaces: the folder goes with the token
+has folder-committed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
+# no token within the budget: no repository headers. A date that jumps 100 s after the helper's start leaves
+# nothing of its 8 s
 mk "$tmp/slowcom"
 printf 'workspace = acme\n' >"$tmp/slowcom/.ergana"
 (cd "$tmp/slowcom" && git add .ergana && git commit -q -m ergana)
@@ -268,7 +253,7 @@ mkdir -p "$tmp/clock"
 printf '#!/bin/sh\nif [ -e "%s/seen" ]; then echo 1100; else : >"%s/seen"; echo 1000; fi\n' "$tmp/clock" "$tmp/clock" >"$tmp/clock/date"
 chmod +x "$tmp/clock/date"
 slowrun=$(PATH="$tmp/clock:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slowcom")
-hasnt folder-budget-spent "$slowrun" 'X-Ergana-Folder'
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "folder-budget-spent $hd" "$slowrun" "$hd"; done
 has folder-budget-spent "$slowrun" 'ergana-not-connected'
 # the same repository on the real clock sends the folder with the token
 has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergana-Folder":"slowcom"'
@@ -281,15 +266,19 @@ norepo() { # <name> <json>: no repository header, the not-connected bearer
   hasnt "$1 token" "$2" 'TOK-'
   valid "$1" "$2"
 }
-# two workspaces (acme, second) are connected here
+# two workspaces are connected here, none of them acme: a committed .ergana naming acme has no token
+mkdir -p "$tmp/home4/.config/ergana"
+cp -R "$cfg/app.ergana.ai" "$tmp/home4/.config/ergana/"
+rm "$tmp/home4/.config/ergana/app.ergana.ai/acme"
+printf 'app.ergana.ai second\napp.ergana.ai third\n' >"$tmp/home4/.config/ergana/workspaces"
 mko "$tmp/r-unc"
 printf 'workspace = acme\n' >"$tmp/r-unc/.ergana"
 git -C "$tmp/r-unc" add .ergana
 git -C "$tmp/r-unc" commit -q -m ergana
-out=$("$helper" "$tmp/r-unc")
-norepo unconfirmed-no-repo "$out"
-has unconfirmed-no-repo "$out" '"X-Ergana-Workspace":"acme"'
-has unconfirmed-no-repo "$out" '"Accept-Language":'
+out=$(HOME="$tmp/home4" "$helper" "$tmp/r-unc")
+norepo no-token-committed "$out"
+has no-token-committed "$out" '"X-Ergana-Workspace":"acme"'
+has no-token-committed "$out" '"Accept-Language":'
 mko "$tmp/r-notok"
 printf 'workspace = nobody\n' >"$tmp/r-notok/.ergana"
 norepo no-token-no-repo "$("$helper" "$tmp/r-notok")"
