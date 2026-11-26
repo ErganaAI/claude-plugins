@@ -72,6 +72,9 @@ Besides the tool calls, a session sends Ergana:
 - hashes of the checkout and of its changes, never the code itself.
 
 From 0.15.0 no other absolute path leaves the machine.
+From 0.17.0 the repository's headers (origin, branch, root hash, folder name) go only with a workspace token, or when
+the repository has no `.ergana`; with `Authorization: Bearer ergana-not-connected` a session sends only the workspace
+slug and the language.
 
 ## One sign-in per workspace
 

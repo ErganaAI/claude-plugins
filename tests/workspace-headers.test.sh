@@ -272,4 +272,59 @@ hasnt folder-budget-spent "$slowrun" 'X-Ergana-Folder'
 has folder-budget-spent "$slowrun" 'ergana-not-connected'
 # the same repository on the real clock sends the folder with the token
 has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergana-Folder":"slowcom"'
+
+# DR-0039.D1: the repository's headers go only with a workspace token, or with no .ergana.
+mko() { mk "$1" && git -C "$1" remote add origin https://github.com/acme/web.git; }
+norepo() { # <name> <json>: no repository header, the not-connected bearer
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "$1 $hd" "$2" "$hd"; done
+  has "$1 bearer" "$2" '"Authorization":"Bearer ergana-not-connected"'
+  hasnt "$1 token" "$2" 'TOK-'
+  valid "$1" "$2"
+}
+# two workspaces (acme, second) are connected here
+mko "$tmp/r-unc"
+printf 'workspace = acme\n' >"$tmp/r-unc/.ergana"
+git -C "$tmp/r-unc" add .ergana
+git -C "$tmp/r-unc" commit -q -m ergana
+out=$("$helper" "$tmp/r-unc")
+norepo unconfirmed-no-repo "$out"
+has unconfirmed-no-repo "$out" '"X-Ergana-Workspace":"acme"'
+has unconfirmed-no-repo "$out" '"Accept-Language":'
+mko "$tmp/r-notok"
+printf 'workspace = nobody\n' >"$tmp/r-notok/.ergana"
+norepo no-token-no-repo "$("$helper" "$tmp/r-notok")"
+mko "$tmp/r-bad"
+printf 'workspace = Bad\n' >"$tmp/r-bad/.ergana"
+out=$("$helper" "$tmp/r-bad")
+norepo malformed-no-repo "$out"
+hasnt malformed-no-repo "$out" 'X-Ergana-Workspace'
+mko "$tmp/r-budget"
+printf 'workspace = acme\n' >"$tmp/r-budget/.ergana"
+git -C "$tmp/r-budget" add .ergana
+git -C "$tmp/r-budget" commit -q -m ergana
+rm -f "$tmp/clock/seen"
+norepo budget-no-repo "$(PATH="$tmp/clock:$PATH" "$helper" "$tmp/r-budget")"
+# tracked unknown: every git call cut off
+mko "$tmp/r-slow"
+printf 'workspace = acme\n' >"$tmp/r-slow/.ergana"
+norepo unknown-no-repo "$(PATH="$tmp/slow/bin:$PATH" "$helper" "$tmp/r-slow")"
+# git refuses the checkout (exit 128 for every call), with a token for the slug
+mkdir -p "$tmp/refuse"
+printf '#!/bin/sh\nexit 128\n' >"$tmp/refuse/git"
+chmod +x "$tmp/refuse/git"
+mko "$tmp/r-ref"
+printf 'workspace = acme\n' >"$tmp/r-ref/.ergana"
+norepo git-refused-root "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref")"
+mkdir -p "$tmp/r-ref/apps/web"
+printf 'workspace = acme\n' >"$tmp/r-ref/apps/web/.ergana"
+norepo git-refused-subfolder "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
+# confirmed with a token: all four headers; no .ergana: repo, branch, hash
+mko "$tmp/r-ok"
+printf 'workspace = acme\n' >"$tmp/r-ok/.ergana"
+out=$("$helper" "$tmp/r-ok")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "confirmed-repo $hd" "$out" "$hd"; done
+has confirmed-repo "$out" '"Authorization":"Bearer TOK-acme"'
+mko "$tmp/r-none"
+out=$("$helper" "$tmp/r-none")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
 exit $failed
