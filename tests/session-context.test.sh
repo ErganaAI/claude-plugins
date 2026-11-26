@@ -28,7 +28,7 @@ check signed-out "echo '{\"hosts\":{}}'" 'GitHub: gh=signed_out'
 check failing 'exit 1' 'GitHub: gh=unknown'
 check slow 'sleep 5' 'GitHub: gh=unknown'
 check missing - 'GitHub: gh=missing'
-# The workspace of the repository (DR-0029.D1, DR-0037.D1) and the login proposal (DR-0036.D1).
+# The workspace of the repository (DR-0029.D1, DR-0051.D1) and the login proposal (DR-0036.D1).
 export HOME="$tmp/home" GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 idx="$HOME/.config/ergana/workspaces"
 mkdir -p "$HOME/.config/ergana"

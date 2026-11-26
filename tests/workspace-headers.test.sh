@@ -242,7 +242,7 @@ hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
 mk "$HOME"
 hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
 hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
-# a committed .ergana with two workspaces: the folder goes with the token
+# a committed .ergana: the folder goes with the token
 has folder-committed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
 # no token within the budget: no repository headers. A date that jumps 100 s after the helper's start leaves
 # nothing of its 8 s
@@ -312,12 +312,12 @@ gitless git-refused-root-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref
 mkdir -p "$tmp/r-ref/apps/web"
 printf 'workspace = acme\n' >"$tmp/r-ref/apps/web/.ergana"
 gitless git-refused-subfolder-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
-# confirmed with a token: all four headers; no .ergana: repo, branch, hash
+# a token: all four headers; no .ergana: repo, branch, hash
 mko "$tmp/r-ok"
 printf 'workspace = acme\n' >"$tmp/r-ok/.ergana"
 out=$("$helper" "$tmp/r-ok")
-for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "confirmed-repo $hd" "$out" "$hd"; done
-has confirmed-repo "$out" '"Authorization":"Bearer TOK-acme"'
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "token-repo $hd" "$out" "$hd"; done
+has token-repo "$out" '"Authorization":"Bearer TOK-acme"'
 mko "$tmp/r-none"
 out=$("$helper" "$tmp/r-none")
 for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done

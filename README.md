@@ -101,12 +101,12 @@ A `.ergana` file, in the project folder or in the main checkout of a linked work
 it does not), makes the MCP headers helper (`scripts/workspace-headers.sh`) send `X-Ergana-Workspace`, `Accept-Language`
 and `Authorization: Bearer <the workspace's token>`. The token is renewed by the helper itself when it expires within
 5 minutes, under a lock so that two sessions renew it once; the whole helper stays under 8 s (Claude Code stops it at
-10 s). With no usable token or a `.ergana` that is malformed, the
-helper sends `Authorization: Bearer ergana-not-connected` and never falls back to the shared sign-in. A repository with
-no `.ergana` keeps the shared sign-in.
+10 s). With no usable token or a `.ergana` that is malformed, the helper sends `Authorization: Bearer
+ergana-not-connected` and never falls back to the shared sign-in. A repository with no `.ergana` keeps the shared
+sign-in.
 
-A committed `.ergana` applies like a local one, with no confirmation (DR-0051.D1). The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
-`.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
+A committed `.ergana` applies like a local one, with no confirmation (DR-0051.D1). The session start names the
+workspace and where the link comes from, and offers `/ergana:login` for a `.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
 Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/info/ergana-later`.
 
 ## Tests
