@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.dont_write_bytecode = True
@@ -314,6 +316,15 @@ class Base(unittest.TestCase):
 
 
 class LoginTest(Base):
+    def test_callback_server_skips_reverse_dns(self):
+        with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("getfqdn called")) as f:
+            srv = self.mod.CallbackServer(("127.0.0.1", 0), self.mod.Callback)
+        try:
+            self.assertGreater(srv.server_address[1], 0)
+            f.assert_not_called()
+        finally:
+            srv.server_close()
+
     def test_1_pkce_and_state(self):
         repo = self.repo()
         r = self.run_auth(["login", "--workspace", "acme"], cwd=repo)

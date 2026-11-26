@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import shutil
+import socketserver
 import signal
 import subprocess
 import sys
@@ -436,10 +437,15 @@ def open_browser(url):
             pass
 
 
+class CallbackServer(HTTPServer):
+    # HTTPServer.server_bind calls socket.getfqdn, a reverse DNS lookup that takes 35 s on a slow resolver.
+    server_bind = socketserver.TCPServer.server_bind
+
+
 def browser_login(o, slug):
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
-    srv = HTTPServer(("127.0.0.1", 0), Callback)
+    srv = CallbackServer(("127.0.0.1", 0), Callback)
     srv.state = secrets.token_urlsafe(24)
     srv.result = None
     redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
