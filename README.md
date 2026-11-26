@@ -41,27 +41,36 @@ Then `/reload-plugins` in a running session. If `DISABLE_AUTOUPDATER`, `DISABLE_
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, auto-update stays off unless `FORCE_AUTOUPDATE_PLUGINS=1` is set
 too.
 
+## Commands
+
+| Command | What it is for |
+| --- | --- |
+| `/ergana:plan [the change, in your words]` | Plans a change before any code is written, then runs its tasks one at a time and lands it as a pull request. |
+| `/ergana:review` | Runs an independent review of the branch's change, security included, before it lands. |
+| `/ergana:add-decision [the decision, in your words]` | Writes one of the team's decisions, tries it on this repository's code and records it in the catalogue. |
+| `/ergana:tracking` | Sets where this repository's tickets go, the GitHub board and columns that show them, and their issue types. |
+| `/ergana:login [workspace]` | Signs in to an Ergana workspace in the browser and links this repository to it. |
+| `/ergana:status` | Shows which workspace this repository is linked to and whether it is signed in on this machine. |
+| `/ergana:logout [workspace]` | Signs out of a workspace on this machine, and the repository stays linked to it. |
+
+In the VS Code extension's panel, plugins are managed with `/plugins`.
+
+## While you work
+
+- Your team's rules reach your agent before it changes code, so it follows them from the first edit.
+- Before finishing, your agent checks its change against those rules. If something is off, it fixes it first.
+- Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
+
 ## What a session sends
 
-Besides the tool calls, each connection to Ergana carries the session folder's origin remote (any user name or token
-stripped; a local path is never sent) and its git branch at connection time, so the Sessions page names them, and a
-hash of the checkout's root folder (its sha256, never the folder itself). Before each edit, the hook sends the edited
-file's path: with the root's hash, Ergana finds which part of the repository the file is in and serves that part's
-rules. Ergana stores nothing of either path.
+Besides the tool calls, a session sends Ergana:
 
-When Ergana refuses a stop, the agent's own `check_done` call carries the repository's fingerprint: a sha256 of the
-checkout's top-level path, its base commit, its diff from that base and its untracked files that git does not ignore
-(`scripts/fingerprint.sh`). The rules check's diff hash is the same fingerprint, so a stop after a turn that changed
-nothing in the repository (a write to a scratch folder, a cache, `/tmp`) goes through without a new check. The
-fingerprint at the session's start is kept in the plugin's data folder (`${CLAUDE_PLUGIN_DATA}/start/<session id>`,
-removed after 30 days), so a session that never changed the repository finishes without a check. Only the hashes leave
-the machine.
+- the repository's origin remote, with any user name or token stripped (a remote that is a local path is never sent);
+- its git branch and the session's name;
+- the path of each file the agent edits;
+- hashes of the checkout and of its changes, never the code itself.
 
-A Stop hook (`scripts/stop.sh`) compares the fingerprint of the git checkout holding the session's folder with the
-session's start and with the last one a passing check cleared (`${CLAUDE_PLUGIN_DATA}/cleared/<session id>`, written by
-`scripts/cleared.sh` when `check_done` or `record_check` answers `through: true`). When it differs, the stop is refused
-once per fingerprint and the agent's `check_done` decides. A folder that is no git checkout, or has no commit, is not
-gated. Shell commands are no longer sent to Ergana's `before_edit`: the fingerprint sees what they changed.
+Ergana does not store the file paths.
 
 ## One sign-in per workspace
 
