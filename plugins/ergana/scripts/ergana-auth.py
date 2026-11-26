@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Ergana's sign-in per workspace: login, status, logout, later, header.
 
-    ergana-auth.py login [--workspace <slug>]   browser sign-in (PKCE), the token kept per workspace
+    ergana-auth.py login [--workspace <slug>]   browser sign-in (PKCE), the token kept per workspace; the
+                                                workspace is optional, the account signed in decides
     ergana-auth.py status                       the repository's workspace and whether it is connected
     ergana-auth.py logout [--workspace <slug>]  revoke, then forget the token
     ergana-auth.py later                        do not offer the sign-in again in this repository
@@ -80,7 +81,7 @@ def host_of(o):
 
 
 def check_slug(slug):
-    if not isinstance(slug, str) or not SLUG_RE.match(slug):
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
         raise Fail(t("espace invalide (3 à 30 lettres minuscules ou chiffres)",
                      "invalid workspace (3 to 30 lowercase letters or digits)"), 2)
     return slug
@@ -442,7 +443,8 @@ class CallbackServer(HTTPServer):
     server_bind = socketserver.TCPServer.server_bind
 
 
-def browser_login(o, slug):
+def browser_login(o, slug, fslug=None):
+    """Sign in at the browser; the pair is stored under the workspace the token names, which is returned."""
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
     srv = CallbackServer(("127.0.0.1", 0), Callback)
@@ -452,9 +454,9 @@ def browser_login(o, slug):
     url = o + "/oauth/authorize?" + urllib.parse.urlencode({
         "response_type": "code", "client_id": client_id(o), "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": srv.state,
-        "resource": o + "/mcp", "workspace": slug})
-    print(t("Ouverture du navigateur pour la connexion à l'espace %s. Sans ouverture, ouvrir ce lien : %s",
-            "Opening the browser to sign in to the %s workspace. If nothing opens, open this link: %s") % (slug, url))
+        "resource": o + "/mcp", **({"workspace": slug} if slug else {})})
+    print(t("Ouverture du navigateur pour la connexion à Ergana. Sans ouverture, ouvrir ce lien : %s",
+            "Opening the browser to sign in to Ergana. If nothing opens, open this link: %s") % url)
     sys.stdout.flush()
     open_browser(url)
     wait = float(os.environ.get("ERGANA_LOGIN_WAIT") or LOGIN_WAIT) if test_mode() else LOGIN_WAIT
@@ -470,13 +472,46 @@ def browser_login(o, slug):
         srv.server_close()
     if "error" in srv.result:
         raise Fail(srv.result["error"])
-    data, secret = token_request(o, {
-        "grant_type": "authorization_code", "code": srv.result["code"], "redirect_uri": redirect,
-        "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
-    if data.get("ergana_workspace") != slug:
-        raise Fail(t("le jeton reçu est d'un autre espace que %s : rien n'est rangé",
-                     "the token received is for another workspace than %s: nothing is stored") % slug)
-    return secret
+    host = host_of(o)
+    # From the exchange until the pair is stored nothing may kill this process: the server has superseded
+    # the previous grant, and a pair lost here locks the person out.
+    old = {s: signal.signal(s, signal.SIG_IGN)
+           for s in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        data, secret = token_request(o, {
+            "grant_type": "authorization_code", "code": srv.result["code"], "redirect_uri": redirect,
+            "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
+        got = data.get("ergana_workspace")
+        refusal = None
+        if not isinstance(got, str) or not SLUG_RE.fullmatch(got):
+            refusal = t("réponse du serveur invalide", "invalid server response")
+        elif slug and got != slug:
+            refusal = (t("Ce dépôt est lié à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                         "This repository is linked to the %s workspace; the account signed in belongs to the %s workspace.")
+                       if fslug else
+                       t("Connexion demandée à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                         "Sign-in asked for the %s workspace; the account signed in belongs to the %s workspace.")
+                       ) % (slug, got)
+            delete_secret(got, host)  # the server superseded it
+            index_remove(got, host)
+        if refusal:
+            try:
+                post_form(o, "/oauth/revoke", {"token": secret["refresh"], "token_type_hint": "refresh_token",
+                                               "client_id": client_id(o)}, 5)
+            except Fail as e:
+                refusal += "\n" + t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % e
+            raise Fail(refusal)
+        lock = secret_file(got, host) + ".lock"
+        host_dir(host)
+        acquire(lock, time.monotonic() + 10)
+        try:
+            store_secret(got, secret, host)
+        finally:
+            shutil.rmtree(lock, ignore_errors=True)
+    finally:
+        for sig, h in old.items():
+            signal.signal(sig, h)
+    return got
 
 
 def cmd_login(args):
@@ -489,18 +524,17 @@ def cmd_login(args):
                      "this repository is linked to the %s workspace by its .ergana file: sign-in to %s refused")
                    % (fslug, arg))
     slug = arg or fslug
-    if not slug:
-        raise Fail(t("espace à indiquer : login --workspace <espace>", "workspace needed: login --workspace <slug>"), 2)
     o = origin()
     host = host_of(o)
-    have = load_secret(slug, host)
+    have = load_secret(slug, host) if slug else None
     if have and have["origin"] == o and have["expires_at"] - time.time() > 60:
         print(t("L'espace %s est déjà connecté.", "The %s workspace is already connected.") % slug)
     else:
-        store_secret(slug, browser_login(o, slug), host)
+        slug = browser_login(o, slug, fslug)
         print(t("Connecté à l'espace %s.", "Signed in to the %s workspace.") % slug)
     index_add(slug, host)
-    write_ergana(start, slug)
+    if not path:
+        write_ergana(start, slug)
     print(t("Reconnecter ergana dans /mcp, ou ouvrir une nouvelle session.",
             "Reconnect ergana in /mcp, or open a new session."))
     return 0
@@ -691,7 +725,7 @@ def main(argv):
             raise Fail("usage: ergana-auth.py <%s> ..." % "|".join(COMMANDS), 2)
         return COMMANDS[argv[0]](argv[1:])
     except Fail as e:
-        sys.stderr.write("ergana: %s\n" % e)
+        sys.stderr.write("".join("ergana: %s\n" % l for l in str(e).split("\n")))
         return e.code
     except KeyboardInterrupt:
         return 130
