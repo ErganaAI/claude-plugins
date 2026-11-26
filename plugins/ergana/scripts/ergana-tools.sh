@@ -9,6 +9,9 @@
 # - begin_check and record_check are for the ergana:check subagent only; each keeps the fingerprint
 #   it carries (sent/<session>.<tool>) for cleared.sh, and record_check is denied when the repository
 #   moved since begin_check; check_done also says whether the repository has an origin remote;
+# - cwd, the agent's own working folder, is removed from every call (the hook's own cwd, read from the
+#   hook input, stays here): the server never receives a local path from an agent's call, except what
+#   this script cannot read, which passes untouched and which the server then reduces;
 # - session_id is this session's, from the hook input, whatever the agent typed;
 # - record_check's base_sha and diff_sha256 are computed here: the base is
 #   `git merge-base HEAD origin/HEAD` (else HEAD), the hash the repository's fingerprint, so a
@@ -65,17 +68,23 @@ fail() {
 
 session=$(printf '%s' "$outer" | sed -n 's/^{"session_id":"\([A-Za-z0-9_-]*\)".*/\1/p')
 [ -n "$session" ] && [ -n "$args" ] || fail "no session id"
-# A tool that takes no session_id is left alone: its schema would refuse the extra field.
-case $tool in
-  check_done | begin_check | record_check) ;;
-  *) printf '%s' "$args" | grep -Eq '[{,]"session_id":' || exit 0 ;;
-esac
-
-# Every key this script sets is removed, then written first.
+# Every key this script sets or drops is removed, then the ones it sets are written first.
 strip() {
   sed -E 's/,"'"$1"'":("([^"\\]|\\.)*"|null|true|false)//; s/^\{"'"$1"'":("([^"\\]|\\.)*"|null|true|false),?/{/'
 }
-new=$(printf '%s' "$args" | strip session_id)
+# A tool that takes no session_id gets none (its schema would refuse the extra field): only its cwd
+# goes, and a call without one is left alone.
+case $tool in
+  check_done | begin_check | record_check) ;;
+  *)
+    if ! printf '%s' "$args" | grep -Eq '[{,]"session_id":'; then
+      printf '%s' "$args" | grep -Eq '[{,]"cwd":' || exit 0
+      new=$(printf '%s' "$args" | strip cwd | sed 's/,}$/}/')
+      printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":%s}}\n' "$new"
+      exit 0
+    fi ;;
+esac
+new=$(printf '%s' "$args" | strip session_id | strip cwd)
 hex64() { printf '%s' "$1" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$'; }
 here=$(cd "$(dirname "$0")" && pwd)
 if [ "$tool" = record_check ] || [ "$tool" = check_done ]; then

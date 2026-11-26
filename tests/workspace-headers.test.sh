@@ -17,7 +17,8 @@ expect() {
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got $2, want $3"; failed=1; fi
 }
 
-# rooted <repository folder> <json>: the json with the root's hash added, as the helper sends it.
+# rooted <repository folder> <json> [folder name]: the json with the root's hash and the folder's name added, as the
+# helper sends them (the name of the repository folder unless given).
 rooted() {
   top=$(git -C "$1" rev-parse --show-toplevel)
   if command -v sha256sum >/dev/null 2>&1; then
@@ -25,7 +26,7 @@ rooted() {
   else
     h=$(printf '%s' "$top" | shasum -a 256 | cut -c1-64)
   fi
-  printf '%s,"X-Ergana-Root-Hash":"%s"}' "${2%\}}" "$h"
+  printf '%s,"X-Ergana-Root-Hash":"%s","X-Ergana-Folder":"%s"}' "${2%\}}" "$h" "${3:-${1##*/}}"
 }
 
 # check <name> <origin, or - for none> <want, without the root's hash>
@@ -69,14 +70,14 @@ expect detached "$("$helper" "$tmp/detached")" \
 # path itself.
 mkdir -p "$tmp/https-plain/apps/admin"
 sub=$("$helper" "$tmp/https-plain/apps/admin")
-expect subfolder "$sub" "$(rooted "$tmp/https-plain" '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}')"
+expect subfolder "$sub" "$(rooted "$tmp/https-plain" '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}' admin)"
 case "$sub" in *"$tmp"*) expect no-local-path leaked none ;; *) expect no-local-path none none ;; esac
 
-# A folder outside git sends nothing; an unexpanded ${CLAUDE_PROJECT_DIR} falls back to the
+# A folder outside git sends only its name; an unexpanded ${CLAUDE_PROJECT_DIR} falls back to the
 # variable, then to the working folder.
 mkdir "$tmp/plain"
-expect not-git "$("$helper" "$tmp/plain")" '{}'
-expect unexpanded "$(cd "$tmp/plain" && CLAUDE_PROJECT_DIR='' "$helper" '${CLAUDE_PROJECT_DIR}')" '{}'
+expect not-git "$("$helper" "$tmp/plain")" '{"X-Ergana-Folder":"plain"}'
+expect unexpanded "$(cd "$tmp/plain" && CLAUDE_PROJECT_DIR='' "$helper" '${CLAUDE_PROJECT_DIR}')" '{"X-Ergana-Folder":"plain"}'
 
 # .ergana (DR-0035.D1): the workspace header, the language, and the refusal when the file is bad.
 # has <name> <json> <fragment>, hasnt <name> <json> <fragment>; valid <name> <json>
@@ -239,4 +240,36 @@ t1=$(date +%s)
 if [ $((t1 - t0)) -lt 8 ]; then echo "ok   slow-git in $((t1 - t0)) s"; else echo "FAIL slow-git: $((t1 - t0)) s"; failed=1; fi
 has slow-git "$out" '"Authorization":"Bearer TOK-acme"'
 valid slow-git "$out"
+
+# X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
+# or a root; none before a committed .ergana is confirmed (DR-0037.D1), a spent budget included.
+mk "$tmp/mono"
+has folder "$("$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
+mk "$tmp/données-clients"
+has folder-encoded "$("$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+mk "$tmp/home/john"
+hasnt folder-user-home "$("$helper" "$tmp/home/john")" 'X-Ergana-Folder'
+mkdir -p "$tmp/Users"
+mk "$tmp/Users/john"
+hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
+mk "$HOME"
+hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
+hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
+# two workspaces are connected here: a committed .ergana not in trusted sends no folder
+hasnt folder-unconfirmed "$("$helper" "$tmp/com-rm")" 'X-Ergana-Folder'
+# confirmed, the folder goes with the token
+has folder-confirmed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
+# a spent budget counts as unconfirmed, even with one workspace (which needs no confirmation): a date that
+# jumps 100 s after the helper's start leaves nothing of its 8 s
+mk "$tmp/slowcom"
+printf 'workspace = acme\n' >"$tmp/slowcom/.ergana"
+(cd "$tmp/slowcom" && git add .ergana && git commit -q -m ergana)
+mkdir -p "$tmp/clock"
+printf '#!/bin/sh\nif [ -e "%s/seen" ]; then echo 1100; else : >"%s/seen"; echo 1000; fi\n' "$tmp/clock" "$tmp/clock" >"$tmp/clock/date"
+chmod +x "$tmp/clock/date"
+slowrun=$(PATH="$tmp/clock:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slowcom")
+hasnt folder-budget-spent "$slowrun" 'X-Ergana-Folder'
+has folder-budget-spent "$slowrun" 'ergana-not-connected'
+# the same repository on the real clock sends the folder with the token
+has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergana-Folder":"slowcom"'
 exit $failed
