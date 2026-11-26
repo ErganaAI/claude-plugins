@@ -870,7 +870,7 @@ class FileStoreTest(Base):
         self.assertEqual(status, 400)
         self.assertIn("Rien n'a été connecté", body)
         self.assertIn("L&#x27;accès a été refusé dans le navigateur. Pour réessayer, lancer ceci dans le dépôt :", body)
-        self.assertIn("<span>Copier</span>", body)
+        self.assertIn('<span aria-live="polite">Copier</span>', body)
 
     def test_page_failed_gives_the_reason(self):
         self.server.answer_ws = "other"

@@ -451,8 +451,8 @@ def callback_page(workspace, reason, nonce):
     esc = html.escape
     now = 3 if workspace else 2
     names = (t("Connexion", "Sign in"), t("Autorisation", "Allow"), t("Retour à Claude Code", "Back to Claude Code"))
-    steps = "".join('<li class="%s"%s><b>%s</b>%s</li>' % (
-        "now" if i == now else "done" if i < now else "", ' aria-current="step"' if i == now else "",
+    steps = "".join('<li%s><b>%s</b>%s</li>' % (
+        ' class="now" aria-current="step"' if i == now else ' class="done"' if i < now else "",
         "✓" if i < now else i, n) for i, n in enumerate(names, 1))
     if workspace:
         title = t("Claude Code est connecté", "Claude Code is connected")
@@ -464,7 +464,7 @@ def callback_page(workspace, reason, nonce):
     else:
         title = t("Rien n'a été connecté", "Nothing was connected")
         card = ('<div class="icon attention">%s</div><div><h1>%s</h1><p>%s %s</p></div><div class="copy">'
-                '<code>/ergana:login</code><button type="button" data-done="%s">%s<span>%s</span></button></div>') % (
+                '<code>/ergana:login</code><button type="button" data-done="%s">%s<span aria-live="polite">%s</span></button></div>') % (
             ICON_ALERT, title, esc(reason), t("Pour réessayer, lancer ceci dans le dépôt :",
                                               "To try again, run this in the repository:"),
             t("Copié", "Copied"), ICON_COPY, t("Copier", "Copy"))
