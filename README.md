@@ -49,7 +49,7 @@ too.
 | `/ergana:review` | Runs an independent review of the branch's change, security included, before it lands. |
 | `/ergana:add-decision [the decision, in your words]` | Writes one of the team's decisions, tries it on this repository's code and records it in the catalogue. |
 | `/ergana:tracking` | Sets where this repository's tickets go, the GitHub board and columns that show them, and their issue types. |
-| `/ergana:login [workspace]` | Signs in to an Ergana workspace in the browser and links this repository to it. |
+| `/ergana:login [workspace]` | Signs in to Ergana in the browser; the account chosen there decides the workspace, and this repository is linked to it. |
 | `/ergana:status` | Shows which workspace this repository is linked to and whether it is signed in on this machine. |
 | `/ergana:logout [workspace]` | Signs out of a workspace on this machine, and the repository stays linked to it. |
 
@@ -78,8 +78,11 @@ slug and the language.
 
 ## One sign-in per workspace
 
-`/ergana:login` signs in to one workspace in the machine's default browser (OAuth with PKCE, the client `ergana-cli`),
-writes `.ergana` (`workspace = <slug>`) at the repository's root and lists it in `.git/info/exclude`. `/ergana:status`
+`/ergana:login` opens the machine's default browser at once (OAuth with PKCE, the client `ergana-cli`), with no
+question: the account chosen there decides the workspace. The token is kept under that workspace and, when the
+repository has no `.ergana`, one is written (`workspace = <slug>`) at its root and listed in `.git/info/exclude`. When
+the repository's `.ergana`, or the optional argument, names another workspace, the sign-in is refused in one line and
+nothing is stored. `/ergana:status`
 shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
 token and removes it (`.ergana` stays). After a login, reconnect ergana in `/mcp` or open a new session.
 
@@ -106,8 +109,8 @@ the sha256 of the absolute git common dir path, a space, and the sha256 of the f
 agreeing option. A `.ergana` counts as committed when it is in the index or still in `HEAD`. That file only guards
 against a silent pick: an agent with an unrestricted shell on the machine could still write it, and the question does not
 protect against a compromised local shell. The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
-`.ergana` with no token, or for no `.ergana` when a workspace is connected; « Plus tard » is remembered in
-`.git/info/ergana-later`.
+`.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
+Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/info/ergana-later`.
 
 ## Tests
 

@@ -125,7 +125,7 @@ class FakeOAuth:
                 outer.requests.append(("POST", u.path, f))
                 if u.path == "/oauth/revoke":
                     outer.revoked.append(f)
-                    return self._json(200, {})
+                    return self._json(500 if outer.revoke_fail else 200, {})
                 if u.path != "/oauth/token":
                     return self._json(404, {})
                 if outer.token_raw is not None:
@@ -168,6 +168,7 @@ class FakeOAuth:
         self.state_override = None
         self.answer_ws = None
         self.token_raw = None
+        self.revoke_fail = False
         self.refresh_delay = 0
         self.refresh_fail = False
         self.valid_refresh = set()
@@ -363,11 +364,122 @@ class LoginTest(Base):
         self.server.answer_ws = "other"
         r = self.run_auth(["login", "--workspace", "acme"], cwd=repo)
         self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.", r.stderr)
         self.assertIsNone(self.get())
         self.assertIsNone(self.get("other"))
         self.assertFalse(os.path.exists(self.cfg("workspaces")))
         self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
         self.assert_clean(r)
+
+    def test_a_no_argument_no_ergana_token_decides(self):
+        repo = self.repo()
+        self.server.answer_ws = "acme"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("workspace", self.server.authorize[0])
+        self.assertNotIn("the acme workspace. If", r.stdout)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        with open(self.cfg("workspaces")) as f:
+            self.assertEqual(f.read().split("\n")[0], "%s acme" % self.server.host)
+        with open(os.path.join(repo, ".ergana")) as f:
+            self.assertEqual(f.read().strip(), "workspace = acme")
+        self.assertIn("/.ergana", self.exclude(repo).splitlines())
+        self.assert_clean(r)
+
+    def mismatch(self, ergana, arg, answer, lang="en_US.UTF-8", stored=None):
+        repo = self.repo(lang)
+        if ergana:
+            with open(os.path.join(repo, ".ergana"), "w") as f:
+                f.write("workspace = %s\n" % ergana)
+        if stored:
+            self.put(stored)
+        self.server.answer_ws = answer
+        r = self.run_auth(["login"] + (["--workspace", arg] if arg else []), cwd=repo, env={"LANG": lang})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(len(self.server.revoked), 1)
+        self.assertEqual(self.server.revoked[0]["token"], "REFRESH-1")
+        self.assertEqual(self.server.revoked[0]["token_type_hint"], "refresh_token")
+        self.assertIsNone(self.get("acme"))
+        self.assertIsNone(self.get(answer) if answer.isalnum() else None)
+        self.assert_clean(r)
+        return repo, r
+
+    def test_b_ergana_mismatch_en_fr(self):
+        repo, r = self.mismatch("acme", None, "other")
+        self.assertIn("This repository is linked to the acme workspace; the account signed in belongs to the other workspace.",
+                      r.stderr)
+        with open(os.path.join(repo, ".ergana")) as f:
+            self.assertEqual(f.read(), "workspace = acme\n")
+        self.setUp_reset()
+        repo, r = self.mismatch("acme", None, "other", lang="fr_FR.UTF-8")
+        self.assertIn("Ce dépôt est lié à l'espace acme ; le compte connecté appartient à l'espace other.", r.stderr)
+
+    def setUp_reset(self):
+        self.server.reset()
+
+    def test_b2_argument_mismatch(self):
+        repo, r = self.mismatch(None, "acme", "other")
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.setUp_reset()
+        repo, r = self.mismatch(None, "acme", "other", lang="fr_FR.UTF-8")
+        self.assertIn("Connexion demandée à l'espace acme ; le compte connecté appartient à l'espace other.", r.stderr)
+
+    def test_b3_stale_pair_of_received_workspace_deleted(self):
+        repo, r = self.mismatch("acme", None, "other", stored="other")
+        self.assertIsNone(self.get("other"))
+        self.assertNotIn("other", open(self.cfg("workspaces")).read() if os.path.exists(self.cfg("workspaces")) else "")
+
+    def test_b4_revoke_failure_second_line(self):
+        repo = self.repo()
+        self.server.answer_ws = "other"
+        self.server.revoke_fail = True
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Revocation not confirmed: refused by the server (HTTP 500)", r.stderr)
+        self.assertEqual(r.stderr.count("\n"), 2)
+
+    def test_c_invalid_received_slug(self):
+        repo = self.repo()
+        self.server.answer_ws = "../x"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid server response", r.stderr)
+        self.assertEqual([f["token"] for f in self.server.revoked], ["REFRESH-1"])
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.assertFalse(os.path.exists(os.path.join(self.home, "x")))
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+        self.assert_clean(r)
+
+    def test_c_trailing_newline_slug_refused(self):
+        repo = self.repo()
+        self.server.answer_ws = "acme\n"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid server response", r.stderr)
+        self.assertFalse(os.path.exists(self.cfg("workspaces")))
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+
+    def test_d_ergana_slug_sent_to_authorize(self):
+        repo = self.repo()
+        with open(os.path.join(repo, ".ergana"), "w") as f:
+            f.write("workspace = acme\n")
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.server.authorize[0]["workspace"], "acme")
+
+    def test_e_replaces_stored_pair_without_revoke(self):
+        self.put("acme")
+        repo = self.repo()
+        self.server.answer_ws = "acme"
+        r = self.run_auth(["login"], cwd=repo)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.server.authorize), 1)
+        self.assertEqual(self.server.revoked, [])
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertEqual(self.get()["refresh"], "REFRESH-1")
+        self.assertTrue(os.path.exists(os.path.join(repo, ".ergana")))
 
     def test_8_writes_ergana_and_absolute_exclude_from_subfolder(self):
         repo = self.repo()
@@ -766,6 +878,46 @@ class FileStoreTest(Base):
         self.assertIn("ACCESS-1", r.stdout)
         self.assertIn("survived True", r.stdout)  # handlers back to the default afterwards
         self.assertEqual(self.get()["refresh"], "REFRESH-1")
+
+    def test_login_signals_ignored_while_storing_then_restored(self):
+        # from the code exchange to the store nothing may kill the login: the server superseded the old grant
+        repo = self.repo()
+        code = (
+            "import importlib.util, os, signal, sys\nsys.dont_write_bytecode = True\n"
+            "spec = importlib.util.spec_from_file_location('ea', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "orig = m.store_secret\n"
+            "def store(*a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM); os.kill(os.getpid(), signal.SIGHUP)\n"
+            "    os.kill(os.getpid(), signal.SIGINT)\n"
+            "    return orig(*a, **k)\n"
+            "m.store_secret = store\n"
+            "rc = m.cmd_login([])\n"
+            "print('survived', rc, signal.getsignal(signal.SIGTERM) is signal.SIG_DFL)\n"
+        ) % SCRIPT
+        r = subprocess.run([sys.executable, "-c", code], cwd=repo, env=dict(os.environ), capture_output=True,
+                           text=True, timeout=60)
+        self.assertIn("survived 0 True", r.stdout, (r.returncode, r.stderr))
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertTrue(os.path.exists(os.path.join(repo, ".ergana")))
+
+    def test_login_store_waits_for_the_renewal_lock(self):
+        repo = self.repo()
+        lock = self.secret_file() + ".lock"
+        os.makedirs(lock)  # a live renewal: this process's pid, a fresh lock
+        with open(os.path.join(lock, "owner"), "w") as f:
+            f.write("%d %d\n" % (os.getpid(), int(time.time())))
+        p = self.popen_auth(["login"], cwd=repo)
+        deadline = time.time() + 30
+        while not self.server.exchanged and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        self.assertIsNone(self.get())  # not stored while the lock is held
+        shutil.rmtree(lock)
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertFalse(os.path.exists(lock))
 
     def test_f1_answer_just_inside_the_post_deadline_is_stored(self):
         self.put(expires_in=100)

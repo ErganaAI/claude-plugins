@@ -24,7 +24,7 @@
               "session_id": "${session_id}",
               "agent_type": "${agent_type}",
               "file_path": "${tool_input.file_path}",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 30
           }
@@ -60,7 +60,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 10
           }
@@ -82,7 +82,7 @@
             "input": {
               "session_id": "${session_id}",
               "background_tasks": "${background_tasks}",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 30
           }
@@ -100,7 +100,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "working",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 10
           },
@@ -133,7 +133,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 10
           }
@@ -156,7 +156,7 @@
               "session_id": "${session_id}",
               "state": "working",
               "name": "${session_title}",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 10
           }
@@ -174,7 +174,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "stopped",
-              "plugin_version": "0.17.0"
+              "plugin_version": "0.18.0"
             },
             "timeout": 10
           }
