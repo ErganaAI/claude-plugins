@@ -79,11 +79,14 @@ printf 'app.ergana.ai acme\napp.ergana.ai other\n' >"$idx"
 out=$(ctx "$tmp/committed" fr_FR.UTF-8)
 has confirm-fr "$out" "Envoyer ce dépôt à l'espace acme ?"
 has confirm-fr-tool "$out" 'AskUserQuestion'
-has confirm-fr-mcp "$out" '/mcp'
+has confirm-fr-mcp "$out" 'plugin:ergana:ergana'
+has confirm-fr-reconnect "$out" 'Reconnect'
 has confirm-fr-labels "$out" 'Oui'
 out=$(ctx "$tmp/committed" en_US.UTF-8)
 has confirm-en "$out" 'Send this repository to the acme workspace?'
 has confirm-en-labels "$out" 'Yes'
+has confirm-en-mcp "$out" 'plugin:ergana:ergana'
+has confirm-en-reconnect "$out" 'Reconnect'
 hasnt confirm-local "$(ctx "$tmp/local" fr_FR.UTF-8)" 'Envoyer ce dépôt'
 # the old in-repository record is not a confirmation any more
 mkdir -p "$(gitpath "$tmp/committed" info)"

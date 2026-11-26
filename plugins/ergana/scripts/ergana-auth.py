@@ -535,8 +535,8 @@ def cmd_login(args):
     index_add(slug, host)
     if not path:
         write_ergana(start, slug)
-    print(t("Reconnecter ergana dans /mcp, ou ouvrir une nouvelle session.",
-            "Reconnect ergana in /mcp, or open a new session."))
+    print(t("Dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect` (ou ouvrir une nouvelle session).",
+            "In /mcp, choose `plugin:ergana:ergana`, then `Reconnect` (or open a new session)."))
     return 0
 
 

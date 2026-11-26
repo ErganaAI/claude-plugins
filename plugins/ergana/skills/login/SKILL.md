@@ -9,6 +9,6 @@ Sign the person in to Ergana. The token is kept per workspace on this machine (m
 1. Never ask the person anything before the browser, and never guess a workspace. Tell the person, in one sentence, that the browser opens and the account chosen there decides the workspace.
 2. Run, with the Bash tool and the repository as the working folder, and wait for it: `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ergana-auth.py" login`. When $ARGUMENTS is not empty, add `--workspace <argument>` as given, so that the helper refuses what is not a workspace name. It opens the person's default browser and waits up to 5 minutes for the sign-in to finish. Never open a browser yourself, never choose a profile, and never read or print a token.
 3. Report its last lines in the person's language, in an impersonal form. When it refuses (a `.ergana` or an argument naming another workspace, an argument that is not a workspace name, a sign-in not finished), say the line's reason in one sentence and stop: never edit `.ergana` or retry with another workspace to get round it.
-4. End with the instruction it prints: reconnect ergana in `/mcp`, or open a new session.
+4. End with the instruction it prints, its labels kept as Claude Code shows them: in `/mcp`, choose `plugin:ergana:ergana`, then `Reconnect`, or open a new session.
 
-Write every sentence to the person in their language, in an impersonal form, with no English label quoted inside a French sentence.
+Write every sentence to the person in their language, in an impersonal form, with no English label quoted inside a French sentence, except `plugin:ergana:ergana` and `Reconnect`, quoted as Claude Code shows them, in code style, untranslated.
