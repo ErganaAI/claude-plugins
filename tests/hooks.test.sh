@@ -24,3 +24,10 @@ if bad:
     sys.exit(1)
 print(f"ok   {n} mcp_tool hooks send no cwd")
 PY
+# skills/login/SKILL.md: no question before the browser, login runs with no --workspace (DR-0040.D1)
+skill="$here/plugins/ergana/skills/login/SKILL.md"
+if grep -q AskUserQuestion "$skill" || ! grep -qF 'ergana-auth.py" login' "$skill"; then
+  echo "FAIL login skill: AskUserQuestion present or bare login command missing"
+  exit 1
+fi
+echo "ok   login skill asks nothing and runs login at once"
