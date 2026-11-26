@@ -3,7 +3,11 @@
 # X-Ergana-Branch, so the Sessions page names them without the agent reporting them, and the sha256
 # of the checkout's root folder as X-Ergana-Root-Hash, so Ergana finds the root among an edited
 # file's folders and knows which part of the repository (which area) the file is in. The root, a
-# local path, is never sent. A .ergana file (workspace = <slug>, DR-0035.D1) in the project folder,
+# local path, is never sent; nor is any other folder's name than the project's own: X-Ergana-Folder is
+# the project folder's name (the last segment, percent-encoded byte by byte), so a monorepo's part can
+# be told apart, and is left out for a home folder, a filesystem root, a folder directly under Users
+# or home, and, when a .ergana exists, until DR-0037.D1's confirmation is known
+# given within the budget. A .ergana file (workspace = <slug>, DR-0035.D1) in the project folder,
 # else in the main checkout of a linked worktree (read without git from .git and commondir, then
 # with git), adds X-Ergana-Workspace and Accept-Language (fr when LANG starts with fr, else en); a
 # .ergana that is unreadable or malformed adds "Authorization: Bearer ergana-not-connected" instead,
@@ -11,7 +15,8 @@
 # the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
 # stops a helper at 10 s), or ergana-not-connected when there is none, when the budget is spent, or when
 # DR-0037.D1 wants a confirmation not given yet (2+ connected workspaces and a .ergana git tracks whose
-# sha256 is not in ~/.config/ergana/trusted). Without .ergana the output is unchanged. A hook cannot
+# sha256 is not in ~/.config/ergana/trusted); that check runs once, before the folder and the token use
+# it, and a spent budget counts as not given. Without .ergana the output is unchanged. A hook cannot
 # hand a command's output to an mcp_tool hook; a headersHelper runs at each MCP connection (session
 # start, reconnect), so the branch is the one at connection time.
 # Silent on any failure (not a git repository, no origin, git missing, over a second): it prints
@@ -79,10 +84,43 @@ fi
 
 ergana_find
 
+# confirmed: 1 unless a .ergana exists and DR-0037.D1's confirmation is not known given within the budget.
+confirmed=1
+if [ -n "$ergana" ]; then
+  confirmed=0
+  budget_left
+  if [ "$left" -ge 1 ] && ! ergana_needs_confirm; then confirmed=1; fi
+fi
+
+# folder: the project folder's name, percent-encoded outside [A-Za-z0-9._~-] one byte at a time (od),
+# or nothing for a home folder, a root or a folder directly under Users or home (any case).
+folder=
+d=$dir
+while :; do case "$d" in ?*/) d=${d%/} ;; *) break ;; esac; done
+home=${HOME:-}
+while :; do case "$home" in ?*/) home=${home%/} ;; *) break ;; esac; done
+parent=${d%/*}
+parent=${parent##*/}
+parent=$(printf '%s' "$parent" | tr 'A-Z' 'a-z')
+name=${d##*/}
+if [ "$confirmed" = 1 ] && [ -n "$name" ] && [ "$d" != "$home" ] && [ "$d" != / ] &&
+  [ "$parent" != users ] && [ "$parent" != home ]; then
+  for h in $(printf '%s' "$name" | LC_ALL=C od -An -v -tx1); do
+    c=$((0x$h))
+    if { [ "$c" -ge 48 ] && [ "$c" -le 57 ]; } || { [ "$c" -ge 65 ] && [ "$c" -le 90 ]; } ||
+      { [ "$c" -ge 97 ] && [ "$c" -le 122 ]; } || [ "$c" -eq 45 ] || [ "$c" -eq 46 ] || [ "$c" -eq 95 ] || [ "$c" -eq 126 ]; then
+      folder="$folder$(printf "\\$(printf '%03o' "$c")")"
+    else
+      folder="$folder%$(printf '%s' "$h" | tr 'a-f' 'A-F')"
+    fi
+  done
+fi
+
 out=
 [ -n "$repo" ] && out="\"X-Ergana-Repo\":\"$repo\""
 [ -n "$branch" ] && out="${out:+$out,}\"X-Ergana-Branch\":\"$branch\""
 [ -n "$hash" ] && out="${out:+$out,}\"X-Ergana-Root-Hash\":\"$hash\""
+[ -n "$folder" ] && out="${out:+$out,}\"X-Ergana-Folder\":\"$folder\""
 if [ -n "$ergana" ]; then
   slug=$(ergana_slug "$ergana")
   if [ -n "$slug" ]; then
@@ -90,8 +128,7 @@ if [ -n "$ergana" ]; then
     out="${out:+$out,}\"X-Ergana-Workspace\":\"$slug\",\"Accept-Language\":\"$lang\""
     # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
     token=
-    budget_left
-    if [ "$left" -ge 1 ] && ! ergana_needs_confirm; then
+    if [ "$confirmed" = 1 ]; then
       budget_left
       if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
         if command -v perl >/dev/null 2>&1; then
