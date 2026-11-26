@@ -94,8 +94,7 @@ hasnt confirmed "$(ctx "$tmp/committed" fr_FR.UTF-8)" 'Envoyer ce dépôt'
 printf '# edit\n' >>"$tmp/committed/.ergana"
 has confirm-after-edit "$(ctx "$tmp/committed" fr_FR.UTF-8)" "Envoyer ce dépôt à l'espace acme ?"
 
-# DR-0036.D1: /ergana:login is offered for a .ergana without token, or with no .ergana when the machine holds
-# a token, unless "Plus tard" was chosen for this repository.
+# DR-0036.D1 / DR-0041.D1: /ergana:login is offered for a .ergana without token, or with no .ergana in a git repository, unless "Plus tard" was chosen for this repository.
 rm -f "$idx"
 mkrepo notoken no
 out=$(ctx "$tmp/notoken" fr_FR.UTF-8)
@@ -105,15 +104,23 @@ has offer-ergana-no-token-slug "$out" 'acme'
 printf 'app.ergana.ai other\n' >"$idx"
 has offer-ergana-other-token "$(ctx "$tmp/notoken" fr_FR.UTF-8)" '/ergana:login'
 mkrepo bare none
-out=$(ctx "$tmp/bare" fr_FR.UTF-8)
-has offer-bare "$out" '/ergana:login'
-has offer-bare-space "$out" 'other'
-has offer-bare-autre "$out" 'Autre'
-has offer-bare-later "$out" 'Plus tard'
-has offer-bare-marker "$out" 'ergana-auth.py" later'
-has offer-bare-en "$(ctx "$tmp/bare" en_US.UTF-8)" 'Later'
 rm -f "$idx"
-hasnt bare-no-token-no-offer "$(ctx "$tmp/bare" fr_FR.UTF-8)" '/ergana:login'
+out=$(ctx "$tmp/bare" fr_FR.UTF-8)
+has offer-bare-empty "$out" 'Se connecter à Ergana ?'
+has offer-bare-empty-go "$out" '"Se connecter" first'
+has offer-bare-empty-later "$out" '"Plus tard" second'
+has offer-bare-empty-login "$out" '/ergana:login skill with no argument'
+has offer-bare-marker "$out" 'ergana-auth.py" later'
+out=$(ctx "$tmp/bare" en_US.UTF-8)
+has offer-bare-en "$out" 'Sign in to Ergana?'
+has offer-bare-en-go "$out" '"Sign in" first'
+has offer-bare-en-later "$out" '"Later" second'
+printf 'app.ergana.ai other\n' >"$idx"
+out=$(ctx "$tmp/bare" fr_FR.UTF-8)
+has offer-bare-ws "$out" 'Se connecter à Ergana ?'
+hasnt offer-bare-ws-slug "$out" '"other"'
+mkdir "$tmp/nogit"
+hasnt offer-outside-git "$(ctx "$tmp/nogit" fr_FR.UTF-8)" '/ergana:login'
 printf 'app.ergana.ai other\n' >"$idx"
 for n in bare notoken; do
   mkdir -p "$(dirname "$(gitpath "$tmp/$n" info/ergana-later)")"
