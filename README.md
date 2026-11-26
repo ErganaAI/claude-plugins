@@ -101,18 +101,11 @@ A `.ergana` file, in the project folder or in the main checkout of a linked work
 it does not), makes the MCP headers helper (`scripts/workspace-headers.sh`) send `X-Ergana-Workspace`, `Accept-Language`
 and `Authorization: Bearer <the workspace's token>`. The token is renewed by the helper itself when it expires within
 5 minutes, under a lock so that two sessions renew it once; the whole helper stays under 8 s (Claude Code stops it at
-10 s). With no usable token, a `.ergana` that is malformed, or a committed `.ergana` not yet confirmed (below), the
+10 s). With no usable token or a `.ergana` that is malformed, the
 helper sends `Authorization: Bearer ergana-not-connected` and never falls back to the shared sign-in. A repository with
 no `.ergana` keeps the shared sign-in.
 
-On a machine with two or more connected workspaces, a `.ergana` committed to git is sent only after the person
-confirmed it once for this repository, machine and file content: the session start asks « Envoyer ce dépôt à l'espace
-<slug> ? » (or "Send this repository to the <slug> workspace?") with `AskUserQuestion`, and a PostToolUse hook
-(`scripts/trust-answer.sh`) records a line in `~/.config/ergana/trusted` (mode 0600, folder 0700), outside the repository:
-the sha256 of the absolute git common dir path, a space, and the sha256 of the file content, when the answer is the
-agreeing option. A `.ergana` counts as committed when it is in the index or still in `HEAD`. That file only guards
-against a silent pick: an agent with an unrestricted shell on the machine could still write it, and the question does not
-protect against a compromised local shell. The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
+A committed `.ergana` applies like a local one, with no confirmation (DR-0051.D1). The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
 `.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
 Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/info/ergana-later`.
 
@@ -122,7 +115,6 @@ CI (`.github/workflows/ci.yml`) runs every `tests/*.test.py` and `tests/*.test.s
 
 ```
 python3 tests/ergana-auth.test.py
-sh tests/trust-answer.test.sh
 sh tests/workspace-headers.test.sh
 sh tests/session-context.test.sh
 sh tests/fingerprint.test.sh

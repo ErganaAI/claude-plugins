@@ -260,6 +260,12 @@ has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergan
 
 # DR-0039.D1: the repository's headers go only with a workspace token, or with no .ergana.
 mko() { mk "$1" && git -C "$1" remote add origin https://github.com/acme/web.git; }
+gitless() { # <name> <json>: the token and the folder, none of what git supplies
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do hasnt "$1 $hd" "$2" "$hd"; done
+  has "$1 folder" "$2" X-Ergana-Folder
+  has "$1" "$2" '"Authorization":"Bearer TOK-acme"'
+  valid "$1" "$2"
+}
 norepo() { # <name> <json>: no repository header, the not-connected bearer
   for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "$1 $hd" "$2" "$hd"; done
   has "$1 bearer" "$2" '"Authorization":"Bearer ergana-not-connected"'
@@ -293,20 +299,19 @@ git -C "$tmp/r-budget" add .ergana
 git -C "$tmp/r-budget" commit -q -m ergana
 rm -f "$tmp/clock/seen"
 norepo budget-no-repo "$(PATH="$tmp/clock:$PATH" "$helper" "$tmp/r-budget")"
-# tracked unknown: every git call cut off
+# git cut off or refused: the .ergana still applies with its token (DR-0051.D1); git supplies no repo, branch or hash
 mko "$tmp/r-slow"
 printf 'workspace = acme\n' >"$tmp/r-slow/.ergana"
-norepo unknown-no-repo "$(PATH="$tmp/slow/bin:$PATH" "$helper" "$tmp/r-slow")"
-# git refuses the checkout (exit 128 for every call), with a token for the slug
+gitless unknown-token "$(PATH="$tmp/slow/bin:$PATH" "$helper" "$tmp/r-slow")"
 mkdir -p "$tmp/refuse"
 printf '#!/bin/sh\nexit 128\n' >"$tmp/refuse/git"
 chmod +x "$tmp/refuse/git"
 mko "$tmp/r-ref"
 printf 'workspace = acme\n' >"$tmp/r-ref/.ergana"
-norepo git-refused-root "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref")"
+gitless git-refused-root-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref")"
 mkdir -p "$tmp/r-ref/apps/web"
 printf 'workspace = acme\n' >"$tmp/r-ref/apps/web/.ergana"
-norepo git-refused-subfolder "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
+gitless git-refused-subfolder-token "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
 # confirmed with a token: all four headers; no .ergana: repo, branch, hash
 mko "$tmp/r-ok"
 printf 'workspace = acme\n' >"$tmp/r-ok/.ergana"

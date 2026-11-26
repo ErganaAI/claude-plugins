@@ -3,7 +3,7 @@
 # server's instructions say the same, but agents seldom act on them alone (John, 19 Nov 2026).
 # No jq: the hook input is matched as text, and an id outside [A-Za-z0-9-]{1,128} prints nothing.
 # The workspace lines (DR-0029.D1 language, DR-0036.D1 named-workspace offer, DR-0041.D1 offer with no
-# .ergana, DR-0037.D1 confirmation) come before the GitHub line, which stays the last one.
+# .ergana, DR-0051.D1 no confirmation) come before the GitHub line, which stays the last one.
 input=$(cat)
 id=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9-]\{1,128\}\)".*/\1/p' | head -n 1)
 [ -n "$id" ] || exit 0
@@ -14,7 +14,7 @@ echo "When Ergana refuses your stop, first call Ergana's check_done tool yoursel
 cwd=$(printf '%s' "$input" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
 here=$(cd "$(dirname "$0")" && pwd)
 
-# The repository's workspace and its source, the confirmation DR-0037.D1 still wants, and the sign-in offer.
+# The repository's workspace and its source, and the sign-in offer.
 workspace_lines() {
   [ -n "$cwd" ] && [ -d "$cwd" ] || return 0
   . "$here/ergana-repo.sh"
@@ -22,8 +22,8 @@ workspace_lines() {
   top=$(git_ rev-parse --show-toplevel)
   ergana_find
   case "${LANG:-}" in
-    fr*) fr=1; yes=Oui; no=Non; later="Plus tard" ;;
-    *) fr=0; yes=Yes; no=No; later=Later ;;
+    fr*) fr=1; later="Plus tard" ;;
+    *) fr=0; later=Later ;;
   esac
   idx=$(ergana_index)
   marker=$(git_ rev-parse --path-format=absolute --git-path info/ergana-later)
@@ -39,10 +39,6 @@ workspace_lines() {
       if [ "$fr" = 1 ]; then src="fichier .ergana local"; else src="local .ergana file"; fi
     fi
     if [ "$fr" = 1 ]; then echo "Espace Ergana : $slug ($src)"; else echo "Ergana workspace: $slug ($src)"; fi
-    if ergana_needs_confirm; then
-      if [ "$fr" = 1 ]; then q="Envoyer ce dépôt à l'espace $slug ?"; else q="Send this repository to the $slug workspace?"; fi
-      echo "This repository's .ergana file, committed to git, names the $slug workspace, and nothing is sent to it until the person confirms. Before anything else, ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$yes\" first and \"$no\" second. A hook records their answer: never record it yourself. After \"$yes\", tell the person: in /mcp, choose plugin:ergana:ergana, then Reconnect, or open a new session, keeping those labels as shown. After \"$no\", do not use Ergana's tools in this repository."
-    fi
     if [ "$offer" = 1 ] && ! grep -q " $slug\$" "$idx" 2>/dev/null; then
       echo "The $slug workspace has no sign-in on this machine. Ask the person with AskUserQuestion whether to sign in now, with the options \"$slug\" and \"$later\". On \"$slug\", start the /ergana:login skill for it. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
     fi
