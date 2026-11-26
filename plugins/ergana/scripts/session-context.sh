@@ -42,6 +42,9 @@ workspace_lines() {
     if [ "$offer" = 1 ] && ! grep -q " $slug\$" "$idx" 2>/dev/null; then
       echo "The $slug workspace has no sign-in on this machine. Ask the person with AskUserQuestion whether to sign in now, with the options \"$slug\" and \"$later\". On \"$slug\", start the /ergana:login skill for it. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
     fi
+  elif [ -z "$ergana" ] && [ -n "$top" ] && only=$(python3 -I "$auth" only 2>/dev/null) && [ -n "$only" ]; then
+    # DR-0057.D1: the machine's one workspace is named instead of the sign-in offer.
+    if [ "$fr" = 1 ]; then echo "Espace Ergana : $only (seul espace connecté sur cette machine)"; else echo "Ergana workspace: $only (only workspace signed in on this machine)"; fi
   elif [ -z "$ergana" ] && [ "$offer" = 1 ] && [ -n "$top" ]; then
     if [ "$fr" = 1 ]; then q="Se connecter à Ergana ?"; go="Se connecter"; else q="Sign in to Ergana?"; go="Sign in"; fi
     echo "This repository has no .ergana file. Ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$go\" first and \"$later\" second. On \"$go\", start the /ergana:login skill with no argument. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."

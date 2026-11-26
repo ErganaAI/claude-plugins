@@ -6,8 +6,10 @@
     ergana-auth.py status                       the repository's workspace and whether it is connected
     ergana-auth.py logout [--workspace <slug>]  revoke, then forget the token
     ergana-auth.py later                        do not offer the sign-in again in this repository
-    ergana-auth.py header <slug> <budget>       the access token for the MCP headers helper (renewed when
-                                                it expires within 5 minutes); nothing but the token on stdout
+    ergana-auth.py header <slug|-> <budget>     the access token for the MCP headers helper (renewed when
+                                                it expires within 5 minutes); nothing but the token on stdout.
+                                                `-`: the origin's one workspace, `<slug> <token>` on one line
+                                                (exit 3: two or more, 4: none, 1 with the slug alone: no token)
 
 Python 3.9, standard library only. The origin is https://app.ergana.ai; ERGANA_ORIGIN (and
 ERGANA_AUTH_KEYCHAIN, ERGANA_LOGIN_WAIT) are read only when ERGANA_AUTH_TEST=1. Every secret is filed under its origin's host and
@@ -706,24 +708,62 @@ def usable(sec, o):
     return bool(sec) and sec["origin"] == o
 
 
+def host_slugs(host):
+    """The workspaces of that host in the index, without duplicates."""
+    slugs = []
+    for l in index_lines():
+        f = l.split(" ")
+        if len(f) == 2 and f[0] == host and SLUG_RE.fullmatch(f[1]) and f[1] not in slugs:
+            slugs.append(f[1])
+    return slugs
+
+
+def cmd_only(args):
+    """Print the origin's one workspace from the index (no network); exit 3 when there are 0 or 2+."""
+    if args:
+        raise Fail("usage: ergana-auth.py only", 2)
+    slugs = host_slugs(host_of(origin()))
+    if len(slugs) != 1:
+        return 3
+    print(slugs[0])
+    return 0
+
+
 def cmd_header(args):
     start = time.monotonic()
     if len(args) != 2:
-        raise Fail("usage: ergana-auth.py header <slug> <budget>", 2)
-    slug = check_slug(args[0])
+        raise Fail("usage: ergana-auth.py header <slug|-> <budget>", 2)
     try:
         budget = float(args[1])
     except ValueError:
-        raise Fail("usage: ergana-auth.py header <slug> <budget>", 2)
+        raise Fail("usage: ergana-auth.py header <slug|-> <budget>", 2)
     deadline = start + budget - 0.3
     o = origin()
     host = host_of(o)
+    if args[0] != "-":
+        sys.stdout.write(header_token(check_slug(args[0]), host, o, deadline) + "\n")
+        return 0
+    # No .ergana (DR-0055.D1): the origin's one workspace on this machine, "<slug> <token>" on one line.
+    slugs = host_slugs(host)
+    if len(slugs) != 1:
+        return 3 if slugs else 4
+    try:
+        tok = header_token(slugs[0], host, o, deadline)
+    except Fail as e:  # not connected, out of time: the slug alone lets the helper name the workspace
+        sys.stderr.write("ergana: %s\n" % e)
+        sys.stdout.write(slugs[0] + "\n")
+        return 1
+    sys.stdout.write("%s %s\n" % (slugs[0], tok))
+    return 0
+
+
+def header_token(slug, host, o, deadline):
+    """The workspace's access token, renewed when it expires within REFRESH_MARGIN."""
     sec = load_secret(slug, host)
     if not usable(sec, o):
         raise Fail(t("espace non connecté", "workspace not connected"))
     if sec["expires_at"] - time.time() > REFRESH_MARGIN:
-        sys.stdout.write(sec["access"] + "\n")
-        return 0
+        return sec["access"]
     lock = secret_file(slug, host) + ".lock"
     host_dir(host)
     acquire(lock, deadline)
@@ -750,8 +790,7 @@ def cmd_header(args):
             sec = new
     finally:
         shutil.rmtree(lock, ignore_errors=True)
-    sys.stdout.write(sec["access"] + "\n")
-    return 0
+    return sec["access"]
 
 
 # ---- logout, status, later
@@ -795,9 +834,14 @@ def cmd_status(args):
     slug, path, tracked = repo_slug()
     o = origin()
     host = host_of(o)
-    if slug:
-        source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
-            t("fichier .ergana local", "local .ergana file")
+    only = host_slugs(host) if not slug else []
+    if slug or len(only) == 1:
+        if slug:
+            source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
+                t("fichier .ergana local", "local .ergana file")
+        else:  # DR-0057.D1
+            slug = only[0]
+            source = t("seul espace connecté sur cette machine", "only workspace signed in on this machine")
         print(t("Espace du dépôt : %s (%s)", "Repository workspace: %s (%s)") % (slug, source))
         sec = load_secret(slug, host)
         if sec and sec["origin"] == o:
@@ -832,7 +876,7 @@ def cmd_later(args):
     return 0
 
 
-COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header}
+COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header, "only": cmd_only}
 
 
 def main(argv):
