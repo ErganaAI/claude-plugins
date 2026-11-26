@@ -72,7 +72,7 @@ r=$(mkrepo string yes); run "$r" "Envoyer ce dépôt à l'espace acme ?" "Oui" s
 r=$(mkrepo head-only yes); git -C "$r" rm -q --cached .ergana
 run "$r" "Envoyer ce dépôt à l'espace acme ?" "Oui"; expect_written in-head-not-index "$r"
 # the record lives outside the repository, private, and the repository gets nothing
-mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }  # GNU first: GNU stat -f is filesystem status
 [ "$(mode "$HOME/.config/ergana/trusted")" = 600 ] && echo "ok   mode-600" || { echo "FAIL mode-600"; failed=1; }
 [ "$(mode "$HOME/.config/ergana")" = 700 ] && echo "ok   dir-700" || { echo "FAIL dir-700"; failed=1; }
 [ -e "$tmp/fr/.git/info/ergana-trusted" ] && { echo "FAIL nothing-in-repo"; failed=1; } || echo "ok   nothing-in-repo"

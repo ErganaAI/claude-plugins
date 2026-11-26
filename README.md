@@ -107,6 +107,8 @@ protect against a compromised local shell. The session start also names the work
 
 ## Tests
 
+CI (`.github/workflows/ci.yml`) runs every `tests/*.test.py` and `tests/*.test.sh` on Ubuntu and macOS for each pull request and each push to main; its `test` check is required to merge into main.
+
 ```
 python3 tests/ergana-auth.test.py
 sh tests/trust-answer.test.sh
