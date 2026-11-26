@@ -83,6 +83,18 @@ ergana_find() {
     ergana=$first
     # 128 is "not a repository" or no such file in one: not tracked. Above that, git was cut off.
     if [ "$firstrc" -gt 128 ]; then tracked=2; else tracked=0; fi
+    # A .git (a file in a linked worktree) in the folder or a parent that git cannot read (dubious ownership,
+    # git missing) is unknown, never "not tracked".
+    if [ "$tracked" = 0 ] && [ -n "$ergana" ]; then
+      g=${ergana%/*}
+      while :; do
+        if [ -e "$g/.git" ]; then
+          gitc "${ergana%/*}" rev-parse --git-dir >/dev/null || tracked=2
+          break
+        fi
+        case "$g" in */*) g=${g%/*} ;; *) break ;; esac
+      done
+    fi
   fi
 }
 
