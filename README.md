@@ -75,6 +75,12 @@ From 0.15.0 no other absolute path leaves the machine.
 From 0.17.0 the repository's headers (origin, branch, root hash, folder name) go only with a workspace token, or when
 the repository has no `.ergana`; with `Authorization: Bearer ergana-not-connected` a session sends only the workspace
 slug and the language.
+From 0.19.4 a repository with no `.ergana` never falls back on Claude Code's own sign-in for the server, which is
+shared by every repository on the machine: with the machine's one signed-in workspace it uses that workspace, named
+at session start and by `/ergana:status` (« seul espace connecté sur cette machine »); with two or more it sends
+`Authorization: Bearer ergana-not-connected`, `X-Ergana-Workspace-File: missing` and the language only, so tool calls
+are refused with the cause in one line and session start offers the sign-in; with none, nothing changes. The token
+step runs before the repository's other git calls, within one 7 s deadline (Claude Code stops the helper at 10 s).
 
 ## One sign-in per workspace
 
