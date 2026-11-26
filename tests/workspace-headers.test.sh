@@ -231,6 +231,92 @@ if [ $((t1 - t0)) -lt 8 ]; then echo "ok   slow-git in $((t1 - t0)) s"; else ech
 has slow-git "$out" '"Authorization":"Bearer TOK-acme"'
 valid slow-git "$out"
 
+# DR-0056.D1, one 7 s deadline: git's top level, then the token, the remote and branch calls last. A git taking
+# 0.8 s per call (it logs its arguments): the signed-in repository still gets its token within 9 s, and the helper
+# writes no token file of its own.
+mkdir -p "$tmp/sg/bin"
+cat >"$tmp/sg/bin/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/sg/log"
+sleep 0.8
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/sg/bin/git"
+mk "$tmp/sg/repo"
+git -C "$tmp/sg/repo" remote add origin https://github.com/acme/web.git
+printf 'workspace = acme\n' >"$tmp/sg/repo/.ergana"
+before=$(cd "$tmp/home3/.config/ergana" && ls -lR | grep -v '^total')
+: >"$tmp/sg/log"
+t0=$(date +%s)
+out=$(PATH="$tmp/sg/bin:$PATH" HOME="$tmp/home3" "$helper" "$tmp/sg/repo")
+t1=$(date +%s)
+if [ $((t1 - t0)) -lt 9 ]; then echo "ok   slow-git-repo in $((t1 - t0)) s"; else echo "FAIL slow-git-repo: $((t1 - t0)) s"; failed=1; fi
+has slow-git-repo "$out" '"Authorization":"Bearer TOK-acme"'
+expect slow-git-no-token-file "$(cd "$tmp/home3/.config/ergana" && ls -lR | grep -v '^total')" "$before"
+
+# A stored token needing a refresh against a local origin answering after 4 s, and the same slow git: the helper
+# still ends within 9 s, with no token, and never reaches the remote and branch calls.
+cat >"$tmp/sg/origin.py" <<'EOF'
+import sys, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self): self.send_response(404); self.end_headers()
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        time.sleep(4)
+        try: self.send_response(400); self.end_headers()
+        except OSError: pass
+s = ThreadingHTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+EOF
+python3 -I "$tmp/sg/origin.py" "$tmp/sg/port" &
+srv=$!
+while [ ! -s "$tmp/sg/port" ]; do sleep 0.1; done
+port=$(cat "$tmp/sg/port")
+mkdir -p "$tmp/home4/.config/ergana/127.0.0.1_$port"
+printf '{"access":"OLD","refresh":"r","expires_at":1,"origin":"http://127.0.0.1:%s"}' "$port" >"$tmp/home4/.config/ergana/127.0.0.1_$port/acme"
+printf '127.0.0.1:%s acme\n' "$port" >"$tmp/home4/.config/ergana/workspaces"
+: >"$tmp/sg/log"
+t0=$(date +%s)
+out=$(ERGANA_ORIGIN="http://127.0.0.1:$port" PATH="$tmp/sg/bin:$PATH" HOME="$tmp/home4" "$helper" "$tmp/sg/repo")
+t1=$(date +%s)
+kill $srv 2>/dev/null; wait $srv 2>/dev/null
+if [ $((t1 - t0)) -lt 9 ]; then echo "ok   slow-token in $((t1 - t0)) s"; else echo "FAIL slow-token: $((t1 - t0)) s"; failed=1; fi
+has slow-token "$out" '"Authorization":"Bearer ergana-not-connected"'
+hasnt slow-token "$out" 'X-Ergana-Repo'
+hasnt slow-token-no-remote-call "$(cat "$tmp/sg/log")" 'remote'
+hasnt slow-token-no-branch-call "$(cat "$tmp/sg/log")" 'branch'
+
+# Under 2 s left once the token is in hand: the remote and branch calls are skipped, the token still sent. A fake
+# date makes the elapsed time exact whatever the machine's load: the helper's start, then 5 s later at the token
+# step (2 s left for it), then 6 s later at the remote and branch step (1 s left). A fast git that logs its calls.
+mkdir -p "$tmp/sg/bin2"
+cat >"$tmp/sg/bin2/date" <<EOF
+#!/bin/sh
+[ "\$*" = +%s ] || exec $(command -v date) "\$@"
+n=\$((\$(cat "$tmp/sg/dates" 2>/dev/null || echo 0) + 1))
+echo \$n >"$tmp/sg/dates"
+case \$n in 1) o=0 ;; 2) o=5 ;; *) o=6 ;; esac
+echo \$((\$($(command -v date) +%s) + o))
+EOF
+cat >"$tmp/sg/bin2/git" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$tmp/sg/log"
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/sg/bin2/date" "$tmp/sg/bin2/git"
+: >"$tmp/sg/log"
+out=$(PATH="$tmp/sg/bin2:$PATH" HOME="$tmp/home3" "$helper" "$tmp/sg/repo")
+expect late-token-clock-reads "$(cat "$tmp/sg/dates")" 3
+has late-token "$out" '"Authorization":"Bearer TOK-acme"'
+hasnt late-token-no-repo "$out" 'X-Ergana-Repo'
+hasnt late-token-no-branch "$out" 'X-Ergana-Branch'
+has late-token-top-level-call "$(cat "$tmp/sg/log")" 'rev-parse --show-toplevel'
+hasnt late-token-no-remote-call "$(cat "$tmp/sg/log")" 'remote'
+hasnt late-token-no-branch-call "$(cat "$tmp/sg/log")" 'branch'
+
 # X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
 # or a root; none without a token within the budget (DR-0039.D1).
 mk "$tmp/mono"

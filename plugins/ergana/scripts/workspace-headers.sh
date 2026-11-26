@@ -11,8 +11,10 @@
 # with git), adds X-Ergana-Workspace and Accept-Language (fr when LANG starts with fr, else en); a
 # .ergana that is unreadable or malformed adds "Authorization: Bearer ergana-not-connected" instead,
 # never a silent fall back to the shared sign-in. A valid .ergana adds "Authorization: Bearer <token>" with
-# the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
-# stops a helper at 10 s), or ergana-not-connected when there is none or the budget is spent (DR-0051.D1:
+# the workspace's own token (ergana-auth.py header, what is left of 7 s: git's top level first, then the
+# token, the remote and branch calls last and only with 2 s of the 7 left, so the helper ends within about
+# 8 s whatever git does; Claude Code stops a helper at 10 s, DR-0056.D1), or ergana-not-connected when there
+# is none or the budget is spent (DR-0051.D1:
 # a committed .ergana applies like a local one, with no confirmation). Without .ergana the output is
 # unchanged, except that the machine's one signed-in workspace stands in for it (DR-0055.D1, see below): with two or
 # more, Bearer ergana-not-connected, X-Ergana-Workspace-File: missing and Accept-Language only. When a .ergana exists,
@@ -32,7 +34,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # git_ (each call cut off after about a second), and the .ergana lookup.
 . "$here/ergana-repo.sh"
 
-# budget_left: $left, the whole seconds left of the 8 s (the clock counts whole seconds: one is held back), 0
+# budget_left: $left, the whole seconds left of the 7 s (the clock counts whole seconds: one is held back), 0
 # when there is no clock.
 budget_left() {
   left=0
@@ -65,12 +67,6 @@ remote() {
       ;;
   esac
 }
-
-repo=$(remote "$(git_ remote get-url origin)")
-branch=$(git_ branch --show-current)
-# A branch outside printable ASCII, or with a quote or a backslash, is not sent (no escaping).
-printf '%s' "$branch" | LC_ALL=C grep -Eq '^[ -~]+$' && ! printf '%s' "$branch" | grep -q '["\\]' ||
-  branch=
 
 # The root's sha256 (git prints it with forward slashes, C:/... on Windows), or nothing.
 top=$(git_ rev-parse --show-toplevel)
@@ -131,7 +127,7 @@ if [ -z "$ergana" ]; then
 fi
 if [ -n "$ergana" ]; then
   [ "$ergana" = none ] || slug=$(ergana_slug "$ergana")
-  # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
+  # The workspace's token, within what is left of 7 s (the clock counts whole seconds: one is held back).
   if [ -n "$slug" ] && [ -z "$token" ] && [ "$ergana" != none ]; then
     budget_left
     if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
@@ -144,6 +140,20 @@ if [ -n "$ergana" ]; then
   fi
   if [ "${#token}" -gt 4096 ] || ! printf '%s' "$token" | LC_ALL=C grep -Eq '^[A-Za-z0-9._~+/=-]+$'; then
     token=
+  fi
+fi
+# The remote and branch calls go last, only when the output carries them (no .ergana, or a workspace token)
+# and at least 2 s of the 7 are left: the token step gets every second the git calls used to take.
+repo=
+branch=
+if [ -z "$ergana" ] || [ -n "$token" ]; then
+  budget_left
+  if [ "$left" -ge 2 ]; then
+    repo=$(remote "$(git_ remote get-url origin)")
+    branch=$(git_ branch --show-current)
+    # A branch outside printable ASCII, or with a quote or a backslash, is not sent (no escaping).
+    printf '%s' "$branch" | LC_ALL=C grep -Eq '^[ -~]+$' && ! printf '%s' "$branch" | grep -q '["\\]' ||
+      branch=
   fi
 fi
 # folder: the project folder's name, percent-encoded outside [A-Za-z0-9._~-] one byte at a time (od),
