@@ -342,8 +342,10 @@ class LoginTest(Base):
         self.assertEqual(len(self.server.exchanged), 1)
         self.assertEqual(self.server.bad_exchanges, [])
         self.assertEqual(self.get()["access"], "ACCESS-1")
-        self.assertIn("/mcp", r.stdout)
+        self.assertEqual(r.stdout.splitlines()[-1], "In /mcp, choose `plugin:ergana:ergana`, then `Reconnect` (or open a new session).")
         self.assert_clean(r)
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
+        self.assertEqual(r.stdout.splitlines()[-1], "Dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect` (ou ouvrir une nouvelle session).")
 
     def test_1_wrong_state_refused(self):
         repo = self.repo()

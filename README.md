@@ -9,7 +9,7 @@
    /plugin install ergana@ergana
    ```
 
-2. Run `/mcp`, select `ergana` and choose Authenticate. Sign in with your company's Google Workspace account.
+2. Run `/mcp`, choose `plugin:ergana:ergana`, then `Authenticate`. Sign in with your company's Google Workspace account.
 
 3. Turn on updates: run `/plugin`, open the **Marketplaces** tab, select `ergana` and turn auto-update on. Claude
    Code does not update a plugin from this marketplace otherwise. With it on, a new version installs during a
@@ -84,7 +84,7 @@ repository has no `.ergana`, one is written (`workspace = <slug>`) at its root a
 the repository's `.ergana`, or the optional argument, names another workspace, the sign-in is refused in one line and
 nothing is stored. `/ergana:status`
 shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
-token and removes it (`.ergana` stays). After a login, reconnect ergana in `/mcp` or open a new session.
+token and removes it (`.ergana` stays). After a login, in `/mcp`, choose `plugin:ergana:ergana`, then `Reconnect` (or open a new session).
 
 The token is kept per workspace: in the macOS Keychain (service `ergana`, account `<slug>@<host>`), else in
 `~/.config/ergana/<host>/<slug>` (mode 0600). `~/.config/ergana/workspaces` lists the connected workspaces, one

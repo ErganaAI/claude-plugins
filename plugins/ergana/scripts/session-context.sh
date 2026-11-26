@@ -41,7 +41,7 @@ workspace_lines() {
     if [ "$fr" = 1 ]; then echo "Espace Ergana : $slug ($src)"; else echo "Ergana workspace: $slug ($src)"; fi
     if ergana_needs_confirm; then
       if [ "$fr" = 1 ]; then q="Envoyer ce dépôt à l'espace $slug ?"; else q="Send this repository to the $slug workspace?"; fi
-      echo "This repository's .ergana file, committed to git, names the $slug workspace, and nothing is sent to it until the person confirms. Before anything else, ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$yes\" first and \"$no\" second. A hook records their answer: never record it yourself. After \"$yes\", ask the person to reconnect ergana in /mcp, or to open a new session. After \"$no\", do not use Ergana's tools in this repository."
+      echo "This repository's .ergana file, committed to git, names the $slug workspace, and nothing is sent to it until the person confirms. Before anything else, ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$yes\" first and \"$no\" second. A hook records their answer: never record it yourself. After \"$yes\", tell the person: in /mcp, choose plugin:ergana:ergana, then Reconnect, or open a new session, keeping those labels as shown. After \"$no\", do not use Ergana's tools in this repository."
     fi
     if [ "$offer" = 1 ] && ! grep -q " $slug\$" "$idx" 2>/dev/null; then
       echo "The $slug workspace has no sign-in on this machine. Ask the person with AskUserQuestion whether to sign in now, with the options \"$slug\" and \"$later\". On \"$slug\", start the /ergana:login skill for it. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
