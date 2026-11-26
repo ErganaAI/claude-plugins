@@ -18,6 +18,8 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
@@ -142,6 +144,7 @@ class FakeOAuth:
                         outer.bad_exchanges.append(f)
                         return self._json(400, {"error": "invalid_grant", "marker": "RAW-BODY-MARKER"})
                     outer.exchanged.append(f)
+                    time.sleep(outer.exchange_delay)
                     return self._json(200, outer.pair(outer.answer_ws or q.get("workspace", "acme")))
                 if f.get("grant_type") == "refresh_token":
                     outer.refreshes.append(f)
@@ -170,6 +173,7 @@ class FakeOAuth:
         self.token_raw = None
         self.revoke_fail = False
         self.refresh_delay = 0
+        self.exchange_delay = 0
         self.refresh_fail = False
         self.valid_refresh = set()
         self.n = 0
@@ -822,6 +826,8 @@ class FileStoreTest(Base):
                    "log.write(json.dumps([r.getcode(), dict(r.headers), r.read().decode()]) + '\\n')\n" % target)
         r = self.run_auth(["login", "--workspace", "acme"], cwd=self.repo(), env={"LANG": lang}, timeout=40)
         status, headers, body = json.loads(open(self.open_log).read().splitlines()[0])
+        for secret in ("code-", "ACCESS-", "REFRESH-"):
+            self.assertNotIn(secret, body)  # neither the authorization code nor a token is shown
         return r, status, headers, body
 
     def _self_contained(self, headers, body):
@@ -884,6 +890,81 @@ class FileStoreTest(Base):
         self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.",
                       body)
         self.assertIsNone(self.get())
+
+    def test_page_token_endpoint_http_error(self):
+        r, status, headers, body = self._page("redirect + '?state=' + state + '&code=code-9'")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("refused by the server (HTTP 400)", r.stderr)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Refused by the server (HTTP 400).", body)
+        self.assertNotIn("RAW-BODY-MARKER", body)
+        self.assert_clean(r)
+        self.assertIsNone(self.get())
+
+    def test_page_token_endpoint_unreachable(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        closed = "http://127.0.0.1:%d" % s.getsockname()[1]
+        s.close()
+        os.environ["ERGANA_ORIGIN"] = closed
+        r, status, headers, body = self._page("redirect + '?state=' + state + '&code=code-9'")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("server unreachable", r.stderr)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Server unreachable.", body)
+        self.assert_clean(r)
+
+    def test_page_internal_error(self):
+        """A non-Fail error in the exchange: the page says "internal error", the error itself goes to the CLI."""
+        pages = []
+
+        def fetch(url):
+            try:
+                urllib.request.urlopen(url, timeout=20).close()
+            except urllib.error.HTTPError as e:
+                with e:
+                    pages.append((e.code, e.read().decode()))
+
+        threads = []
+
+        def browser(url):
+            threads.append(threading.Thread(target=fetch, args=(url,), daemon=True))
+            threads[0].start()
+
+        boom = RuntimeError("SECRET-DETAIL")
+        with mock.patch.object(self.mod, "open_browser", browser), \
+                mock.patch.object(self.mod, "token_request", side_effect=boom):
+            with self.assertRaises(RuntimeError) as cm:
+                self.mod.browser_login(self.server.origin, "acme")
+        threads[0].join(20)
+        self.assertIs(cm.exception, boom)
+        status, body = pages[0]
+        self.assertEqual(status, 400)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Internal error. To try again", body)
+        for s in ("SECRET-DETAIL", "RuntimeError", "code-", "ACCESS-", "REFRESH-"):
+            self.assertNotIn(s, body)
+
+    def test_tab_closed_during_exchange_prints_nothing(self):
+        """The browser drops the connection while the exchange runs: the write fails, quietly, login succeeds."""
+        self.server.exchange_delay = 1
+        self._stub("import http.client, struct, time\n"
+                   "a = urllib.parse.urlparse(url)\n"
+                   "c = http.client.HTTPConnection(a.netloc, timeout=10)\n"
+                   "c.request('GET', a.path + '?' + a.query)\n"
+                   "cb = urllib.parse.urlparse(c.getresponse().getheader('Location'))\n"
+                   "s = socket.create_connection(('127.0.0.1', port))\n"
+                   "s.sendall(('GET %s?%s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n' % (cb.path, cb.query)).encode())\n"
+                   "time.sleep(0.3)\n"
+                   "s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))\n"
+                   "s.close()  # a reset, as a closed tab\n")
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=self.repo(), timeout=40)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assert_clean(r)
+        self.assertNotIn("Exception", r.stderr)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
 
     def test_page_escapes_its_text(self):
         evil = '<img src=x onerror="alert(1)">&'

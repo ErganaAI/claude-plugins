@@ -544,6 +544,12 @@ class CallbackServer(HTTPServer):
     # HTTPServer.server_bind calls socket.getfqdn, a reverse DNS lookup that takes 35 s on a slow resolver.
     server_bind = socketserver.TCPServer.server_bind
 
+    def handle_error(self, request, client_address):
+        # A tab closed while the exchange ran makes the page's write fail: the login's result stands, so print
+        # nothing. Any other error keeps socketserver's report.
+        if not isinstance(sys.exc_info()[1], OSError):
+            super().handle_error(request, client_address)
+
 
 def browser_login(o, slug, fslug=None):
     """Sign in at the browser; the pair is stored under the workspace the token names, which is returned."""
