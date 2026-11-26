@@ -55,4 +55,15 @@ hasnt relay-other-tool "$(step get_messages '{"session_id":"x"}')" relay_key
 hasnt relay-not-check-done "$(call check_done "")" relay_key
 printf 'short\n' >"$tmp/data/inbox/s1.key"
 hasnt relay-malformed "$(step report_step '{"session_id":"x","task":"t"}')" relay_key
+# An agent's call never carries the working folder (cwd): stripped with or without session_id.
+# raw <tool> <tool_input>
+raw() {
+  printf '{"session_id":"s1","cwd":"%s","agent_type":"","tool_name":"mcp__plugin_ergana_ergana__%s","tool_input":%s}' \
+    "$repo" "$1" "$2" | sh "$script"
+}
+expect cwd-stripped-with-session "$(raw report_step '{"session_id":"x","cwd":"/Users/a/r","task":"x"}')" \
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"session_id":"s1","task":"x"}}}'
+expect cwd-stripped-no-session "$(raw find_decisions '{"repository":"r","cwd":"/Users/a/r"}')" \
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"repository":"r"}}}'
+expect no-cwd-untouched "$(raw find_decisions '{"repository":"r"}')" ''
 exit $failed
