@@ -323,14 +323,24 @@ mk "$tmp/mono"
 has folder "$(HOME="$empty" "$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
 mk "$tmp/données-clients"
 has folder-encoded "$(HOME="$empty" "$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+# With no workspace signed in (HOME="$empty"), so that the repository's other headers are sent and only the
+# folder's exclusion can leave X-Ergana-Folder out (with two workspaces nothing of the repository goes).
 mk "$tmp/home/john"
-hasnt folder-user-home "$("$helper" "$tmp/home/john")" 'X-Ergana-Folder'
+out=$(HOME="$empty" "$helper" "$tmp/home/john")
+hasnt folder-user-home "$out" 'X-Ergana-Folder'
+has folder-user-home-hash "$out" '"X-Ergana-Root-Hash"'
 mkdir -p "$tmp/Users"
 mk "$tmp/Users/john"
-hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
-mk "$HOME"
-hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
-hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
+out=$(HOME="$empty" "$helper" "$tmp/Users/john")
+hasnt folder-users "$out" 'X-Ergana-Folder'
+has folder-users-hash "$out" '"X-Ergana-Root-Hash"'
+mk "$tmp/h2"
+out=$(HOME="$tmp/h2" "$helper" "$tmp/h2")
+hasnt folder-home "$out" 'X-Ergana-Folder'
+has folder-home-hash "$out" '"X-Ergana-Root-Hash"'
+out=$(HOME="$empty" "$helper" /)
+hasnt folder-root "$out" 'X-Ergana-Folder'
+hasnt folder-root-auth "$out" 'Authorization'
 # a committed .ergana: the folder goes with the token
 has folder-committed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
 # no token within the budget: no repository headers. A date that jumps 100 s after the helper's start leaves
