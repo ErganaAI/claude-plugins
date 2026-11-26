@@ -84,7 +84,10 @@ repository has no `.ergana`, one is written (`workspace = <slug>`) at its root a
 the repository's `.ergana`, or the optional argument, names another workspace, the sign-in is refused in one line and
 nothing is stored. `/ergana:status`
 shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
-token and removes it (`.ergana` stays). After a login, in `/mcp`, choose `plugin:ergana:ergana`, then `Reconnect` (or open a new session).
+token and removes it (`.ergana` stays). From 0.19.3 the session that ran the login uses the new token from its next tool call, with no `/mcp` step: the server
+lets `ergana-not-connected` through the connection and the tool list and refuses only tool calls, on which Claude Code
+runs the headers helper again and retries (#31). Only if a call still fails, in `/mcp`, choose `plugin:ergana:ergana`,
+then `Reconnect`.
 
 From 0.19.0 the browser tab returns to a page of the sign-in's last step: connected, with the workspace's name, or
 nothing connected, with the reason and `/ergana:login` to copy. The page is served by the script on `127.0.0.1`,

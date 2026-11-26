@@ -321,4 +321,15 @@ has token-repo "$out" '"Authorization":"Bearer TOK-acme"'
 mko "$tmp/r-none"
 out=$("$helper" "$tmp/r-none")
 for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
+# #31: one session's life. Claude Code runs the helper at the connection, before /ergana:login: the server's
+# handshake takes exactly this (the bearer and a valid slug, nothing about the repository). Once the login stored a
+# token, the helper's next run (Claude Code's, on a tool call's 401) carries it: no /mcp Reconnect in between.
+mko "$tmp/s31"
+printf 'workspace = late\n' >"$tmp/s31/.ergana"
+expect s31-before "$(LANG=C "$helper" "$tmp/s31")" \
+  '{"X-Ergana-Workspace":"late","Accept-Language":"en","Authorization":"Bearer ergana-not-connected"}'
+putsecret late
+out=$("$helper" "$tmp/s31")
+has s31-after "$out" '"Authorization":"Bearer TOK-late"'
+has s31-after "$out" '"X-Ergana-Repo":'
 exit $failed

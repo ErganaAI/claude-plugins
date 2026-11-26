@@ -649,8 +649,10 @@ def cmd_login(args):
     index_add(slug, host)
     if not path:
         write_ergana(start, slug)
-    print(t("Dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect` (ou ouvrir une nouvelle session).",
-            "In /mcp, choose `plugin:ergana:ergana`, then `Reconnect` (or open a new session)."))
+    # The server lets ergana-not-connected through the handshake and refuses only tool calls, on which Claude Code
+    # runs the headers helper again: the session's next call carries the new token (#31).
+    print(t("Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.",
+            "Ergana's tools work in this session from their next call. If one still says the server is not connected: in /mcp, choose `plugin:ergana:ergana`, then `Reconnect`."))
     return 0
 
 
