@@ -66,11 +66,12 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
 Besides the tool calls, a session sends Ergana:
 
 - the repository's origin remote, with any user name or token stripped (a remote that is a local path is never sent);
-- its git branch and the session's name;
-- the path of each file the agent edits;
+- its git branch, the session's name and the name of the session's folder (none for a home folder);
+- the path of each file the agent edits, as Claude Code gives it: Ergana reduces it on arrival to its place in the
+  repository and never keeps or logs it;
 - hashes of the checkout and of its changes, never the code itself.
 
-Ergana does not store the file paths.
+From 0.15.0 no other absolute path leaves the machine.
 
 ## One sign-in per workspace
 
