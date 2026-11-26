@@ -1,5 +1,5 @@
 {
-  "description": "Ergana: the session id at session start, the rules in scope before each edit (for the edited file's part of the repository), the done gate on stop (a command hook compares the git checkout's fingerprint with the session's start and the last one a check cleared, and refuses a changed stop once per fingerprint; the agent's check_done then gates), the session's live state (working, waiting for you, or ended on /clear) and its name, the person\u0027s answer to the confirmation of a committed .ergana file recorded, the check agent kept read-only, and Ergana\u0027s own tools given this session\u0027s id and stripped of the agent\u0027s working folder (no hook sends one), the repository's fingerprint computed (for the check and for the agent's own check_done after a refused stop), the hook-only tools kept to the hooks and the check tools to the check agent.",
+  "description": "Ergana: the session id at session start, the rules in scope before each edit (for the edited file's part of the repository), the done gate on stop (a command hook compares the git checkout's fingerprint with the session's start and the last one a check cleared, and refuses a changed stop once per fingerprint; the agent's check_done then gates), the session's live state (working, waiting for you, or ended on /clear) and its name, the check agent kept read-only, and Ergana\u0027s own tools given this session\u0027s id and stripped of the agent\u0027s working folder (no hook sends one), the repository's fingerprint computed (for the check and for the agent's own check_done after a refused stop), the hook-only tools kept to the hooks and the check tools to the check agent.",
   "hooks": {
     "SessionStart": [
       {
@@ -24,7 +24,7 @@
               "session_id": "${session_id}",
               "agent_type": "${agent_type}",
               "file_path": "${tool_input.file_path}",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 30
           }
@@ -60,7 +60,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 10
           }
@@ -82,7 +82,7 @@
             "input": {
               "session_id": "${session_id}",
               "background_tasks": "${background_tasks}",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 30
           }
@@ -100,13 +100,8 @@
             "input": {
               "session_id": "${session_id}",
               "state": "working",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/trust-answer.sh",
             "timeout": 10
           }
         ]
@@ -133,7 +128,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "waiting",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 10
           }
@@ -156,7 +151,7 @@
               "session_id": "${session_id}",
               "state": "working",
               "name": "${session_title}",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 10
           }
@@ -174,7 +169,7 @@
             "input": {
               "session_id": "${session_id}",
               "state": "stopped",
-              "plugin_version": "0.19.1"
+              "plugin_version": "0.19.2"
             },
             "timeout": 10
           }

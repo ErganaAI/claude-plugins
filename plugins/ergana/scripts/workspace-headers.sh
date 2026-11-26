@@ -12,10 +12,9 @@
 # .ergana that is unreadable or malformed adds "Authorization: Bearer ergana-not-connected" instead,
 # never a silent fall back to the shared sign-in. A valid .ergana adds "Authorization: Bearer <token>" with
 # the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
-# stops a helper at 10 s), or ergana-not-connected when there is none, when the budget is spent, or when
-# DR-0037.D1 wants a confirmation not given yet (2+ connected workspaces and a .ergana git tracks whose
-# sha256 is not in ~/.config/ergana/trusted); that check runs once, before the folder and the token use
-# it, and a spent budget counts as not given. Without .ergana the output is unchanged. When a .ergana exists,
+# stops a helper at 10 s), or ergana-not-connected when there is none or the budget is spent (DR-0051.D1:
+# a committed .ergana applies like a local one, with no confirmation). Without .ergana the output is
+# unchanged. When a .ergana exists,
 # X-Ergana-Repo, -Branch, -Root-Hash and -Folder (DR-0039.D1) are sent only when the final Authorization is a
 # workspace token, decided after the token step: with Bearer ergana-not-connected the output is the workspace
 # slug (when valid), Accept-Language and that bearer, nothing else. A hook cannot
@@ -29,7 +28,7 @@ t0=$(date +%s 2>/dev/null)
 dir=${1:-}
 case "$dir" in '' | *'${'*) dir=${CLAUDE_PROJECT_DIR:-$PWD} ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
-# git_ (each call cut off after about a second), the .ergana lookup and the confirmation check.
+# git_ (each call cut off after about a second), and the .ergana lookup.
 . "$here/ergana-repo.sh"
 
 # budget_left: $left, the whole seconds left of the 8 s (the clock counts whole seconds: one is held back), 0
@@ -86,14 +85,6 @@ fi
 
 ergana_find
 
-# confirmed: 1 unless a .ergana exists and DR-0037.D1's confirmation is not known given within the budget.
-confirmed=1
-if [ -n "$ergana" ]; then
-  confirmed=0
-  budget_left
-  if [ "$left" -ge 1 ] && ! ergana_needs_confirm; then confirmed=1; fi
-fi
-
 # The repository's headers go only with a workspace token (DR-0039.D1), or with no .ergana: the output is
 # built after the token step.
 slug=
@@ -103,7 +94,7 @@ if [ -n "$ergana" ]; then
   slug=$(ergana_slug "$ergana")
   case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
   # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
-  if [ -n "$slug" ] && [ "$confirmed" = 1 ]; then
+  if [ -n "$slug" ]; then
     budget_left
     if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
       if command -v perl >/dev/null 2>&1; then

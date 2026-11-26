@@ -12,4 +12,4 @@ Their words so far: $ARGUMENTS
 
 The trial runner: `${CLAUDE_SKILL_DIR}/trial.py`.
 
-If Ergana's tools are not available, tell the person, in their language: when this session's start asked to confirm the repository's workspace and it was declined or not answered, Ergana is not used in this repository (on a pending confirmation, ask that question again); else, when the repository has a `.ergana` file, run `/ergana:login`, then in `/mcp` choose `plugin:ergana:ergana`, then `Reconnect`; otherwise run `/mcp`, choose `plugin:ergana:ergana`, then `Authenticate`. These labels stay as Claude Code shows them, in code style, untranslated.
+If Ergana's tools are not available, tell the person, in their language: when the repository has a `.ergana` file, run `/ergana:login`, then in `/mcp` choose `plugin:ergana:ergana`, then `Reconnect`; otherwise run `/mcp`, choose `plugin:ergana:ergana`, then `Authenticate`. These labels stay as Claude Code shows them, in code style, untranslated.

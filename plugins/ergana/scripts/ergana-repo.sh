@@ -1,6 +1,6 @@
 #!/bin/sh
 # Sourced by workspace-headers.sh and session-context.sh: the repository's .ergana file (DR-0035.D1),
-# whether git tracks it, and whether DR-0037.D1 still wants the person's confirmation. The caller sets
+# and whether git tracks it (DR-0051.D1: it applies like a local one, with no confirmation). The caller sets
 # $dir (the session's folder) and, for the root, $top (git's top level, or empty); everything is silent
 # and every git call is cut off after about a second when perl is there to time it.
 
@@ -106,42 +106,4 @@ ergana_slug() {
   printf '%s' "$s" | LC_ALL=C grep -Eq '^[a-z0-9]{3,30}$' && printf '%s' "$s"
 }
 
-ergana_sha() { # <file>: its sha256, or nothing
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" 2>/dev/null | cut -c1-64
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" 2>/dev/null | cut -c1-64
-  fi
-}
-
 ergana_index() { printf '%s' "${HOME:-/nonexistent}/.config/ergana/workspaces"; }
-ergana_trusted() { printf '%s' "${HOME:-/nonexistent}/.config/ergana/trusted"; }
-
-ergana_sha_str() { # <string>: its sha256, or nothing
-  if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s' "$1" | sha256sum 2>/dev/null | cut -c1-64
-  elif command -v shasum >/dev/null 2>&1; then
-    printf '%s' "$1" | shasum -a 256 2>/dev/null | cut -c1-64
-  fi
-}
-
-# ergana_trust_line: "<sha256 of the absolute git common dir> <sha256 of the .ergana>", or nothing.
-ergana_trust_line() {
-  common=$(git_ rev-parse --path-format=absolute --git-common-dir)
-  [ -n "$common" ] || return 0
-  k=$(ergana_sha_str "$common")
-  sum=$(ergana_sha "$ergana")
-  [ -n "$k" ] && [ -n "$sum" ] && printf '%s %s' "$k" "$sum"
-}
-
-# ergana_needs_confirm: DR-0037.D1, true when 2+ workspaces are connected on this machine and the .ergana
-# git tracks (or may track) is not one whose line is in ~/.config/ergana/trusted (outside the repository,
-# which neither the repository nor a git command can change).
-ergana_needs_confirm() {
-  [ "$tracked" = 0 ] && return 1
-  n=$(grep -c . "$(ergana_index)" 2>/dev/null)
-  [ "${n:-0}" -ge 2 ] || return 1
-  line=$(ergana_trust_line)
-  [ -n "$line" ] && grep -qxF "$line" "$(ergana_trusted)" 2>/dev/null && return 1
-  return 0
-}

@@ -303,14 +303,6 @@ class Base(unittest.TestCase):
         for s in ("ACCESS-", "REFRESH-", "RAW-BODY-MARKER", "code-1") + forbidden:
             self.assertNotIn(s, out)
 
-    def trusted(self, repo):
-        p = subprocess.run(
-            ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "info/ergana-trusted"],
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        return os.path.exists(p) or os.path.exists(self.cfg("trusted"))
-
     def exclude(self, repo):
         p = subprocess.run(
             ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
@@ -1124,18 +1116,6 @@ class FileStoreTest(Base):
             text=True,
         ).stdout.strip()
         self.assertTrue(os.path.exists(p))
-
-    def test_13_no_subcommand_writes_the_confirmation(self):
-        repo = self.repo()
-        with open(os.path.join(repo, ".ergana"), "w") as f:
-            f.write("workspace = acme\n")
-        subprocess.run(["git", "-C", repo, "add", ".ergana"], check=True)
-        self.put(expires_in=100)
-        self.put(slug="other1", access="O", refresh="REFRESH-O1")
-        for args in (["login"], ["status"], ["later"], ["header", "acme", "5"], ["logout"]):
-            self.run_auth(args, cwd=repo)
-        self.run_auth(["login", "--workspace", "acme"], cwd=repo)
-        self.assertFalse(self.trusted(repo))
 
 
 if __name__ == "__main__":
