@@ -813,6 +813,84 @@ class FileStoreTest(Base):
         self.assertEqual(self.get()["access"], "ACCESS-1")
         self.assertEqual(self.server.bad_exchanges, [])
 
+    # -- the browser's return page: one self-contained HTML answer, after the exchange
+    def _page(self, target, lang="en_US.UTF-8"):
+        """Runs login with a browser that fetches `target` (an expression); (result, status, headers, body)."""
+        self._stub("import json\nstate = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)['state'][0]\n"
+                   "try:\n    r = urllib.request.urlopen(%s, timeout=30)\n"
+                   "except urllib.error.HTTPError as e:\n    r = e\n"
+                   "log.write(json.dumps([r.getcode(), dict(r.headers), r.read().decode()]) + '\\n')\n" % target)
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=self.repo(), env={"LANG": lang}, timeout=40)
+        status, headers, body = json.loads(open(self.open_log).read().splitlines()[0])
+        return r, status, headers, body
+
+    def _self_contained(self, headers, body):
+        self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
+        csp = headers["Content-Security-Policy"]
+        self.assertIn("default-src 'none'", csp)
+        nonce = csp.split("style-src 'nonce-")[1].split("'")[0]
+        self.assertIn('<style nonce="%s">' % nonce, body)
+        for s in ("src=", "href=", "url(", "@import", "http"):
+            self.assertNotIn(s, body)  # nothing loaded from the network
+        self.assertIn('aria-label="Ergana"', body)  # the inline mark
+        return nonce
+
+    def test_page_connected(self):
+        r, status, headers, body = self._page("url")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(status, 200)
+        self._self_contained(headers, body)
+        self.assertIn("Claude Code is connected", body)
+        self.assertIn("This repository now uses <strong>acme</strong>.", body)
+        self.assertIn('<li class="now" aria-current="step"><b>3</b>Back to Claude Code', body)
+        self.assertNotIn("<script", body)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+
+    def test_page_connected_fr(self):
+        _, status, _, body = self._page("url", lang="fr_FR.UTF-8")
+        self.assertEqual(status, 200)
+        self.assertIn('<html lang="fr">', body)
+        self.assertIn("Claude Code est connecté", body)
+        self.assertIn("Ce dépôt utilise désormais <strong>acme</strong>.", body)
+
+    def test_page_denied(self):
+        r, status, headers, body = self._page("redirect + '?state=' + state")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("sign-in refused in the browser", r.stderr)
+        self.assertEqual(status, 400)
+        nonce = self._self_contained(headers, body)
+        self.assertIn("script-src 'nonce-%s'" % nonce, headers["Content-Security-Policy"])
+        self.assertIn('<script nonce="%s">' % nonce, body)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Access was denied in the browser. To try again, run this in the repository:", body)
+        self.assertIn("<code>/ergana:login</code>", body)
+        self.assertIn('<li class="now" aria-current="step"><b>2</b>Allow', body)
+        self.assertEqual(self.server.exchanged, [])
+
+    def test_page_denied_fr(self):
+        _, status, _, body = self._page("redirect + '?state=' + state", lang="fr_FR.UTF-8")
+        self.assertEqual(status, 400)
+        self.assertIn("Rien n'a été connecté", body)
+        self.assertIn("L&#x27;accès a été refusé dans le navigateur. Pour réessayer, lancer ceci dans le dépôt :", body)
+        self.assertIn('<span aria-live="polite">Copier</span>', body)
+
+    def test_page_failed_gives_the_reason(self):
+        self.server.answer_ws = "other"
+        r, status, headers, body = self._page("url")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(status, 400)
+        self._self_contained(headers, body)
+        self.assertIn("Nothing was connected", body)
+        self.assertIn("Sign-in asked for the acme workspace; the account signed in belongs to the other workspace.",
+                      body)
+        self.assertIsNone(self.get())
+
+    def test_page_escapes_its_text(self):
+        evil = '<img src=x onerror="alert(1)">&'
+        for page in (self.mod.callback_page(evil, None, "n"), self.mod.callback_page(None, evil, "n")):
+            self.assertNotIn(evil, page)
+            self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;", page)
+
     # -- F4: a symlinked .ergana is never written through
     def test_f4_dangling_symlink_not_written_through(self):
         repo = self.repo()
