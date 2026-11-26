@@ -11,6 +11,9 @@ failed=0
 export HOME="$tmp/home" ERGANA_AUTH_TEST=1 ERGANA_AUTH_KEYCHAIN=0 GIT_CONFIG_GLOBAL=/dev/null
 unset ERGANA_ORIGIN
 mkdir "$HOME"
+# a HOME with no workspace: the no-.ergana cases that predate DR-0055.D1 run in it
+empty="$tmp/empty"
+mkdir "$empty"
 
 # expect <name> <got> <want>
 expect() {
@@ -169,7 +172,7 @@ has token "$out" '"Accept-Language":'
 hasnt token "$out" 'not-connected'
 valid token "$out"
 mk "$tmp/tok-none"
-hasnt no-ergana-with-tokens "$("$helper" "$tmp/tok-none")" 'Authorization'
+hasnt no-ergana-with-tokens "$(HOME="$empty" "$helper" "$tmp/tok-none")" 'Authorization'
 
 # 2+ workspaces: an untracked or a committed .ergana is sent with its workspace's token, no confirmation.
 putsecret second
@@ -231,9 +234,9 @@ valid slow-git "$out"
 # X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
 # or a root; none without a token within the budget (DR-0039.D1).
 mk "$tmp/mono"
-has folder "$("$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
+has folder "$(HOME="$empty" "$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
 mk "$tmp/données-clients"
-has folder-encoded "$("$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+has folder-encoded "$(HOME="$empty" "$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
 mk "$tmp/home/john"
 hasnt folder-user-home "$("$helper" "$tmp/home/john")" 'X-Ergana-Folder'
 mkdir -p "$tmp/Users"
@@ -319,8 +322,54 @@ out=$("$helper" "$tmp/r-ok")
 for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "token-repo $hd" "$out" "$hd"; done
 has token-repo "$out" '"Authorization":"Bearer TOK-acme"'
 mko "$tmp/r-none"
-out=$("$helper" "$tmp/r-none")
+out=$(HOME="$empty" "$helper" "$tmp/r-none")
 for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
+# DR-0055.D1: no .ergana, the machine's workspaces for the production host decide.
+# a throwaway HOME per case: <name> <slug with a token>... ; the slugs listed without a token follow "--"
+nohome() { # <name> <index lines...>: HOME with the index, tokens for the slugs of app.ergana.ai lines marked +
+  h="$tmp/nh-$1"; shift
+  mkdir -p "$h/.config/ergana/app.ergana.ai"
+  : >"$h/.config/ergana/workspaces"
+  for l in "$@"; do
+    case "$l" in
+      +*) printf 'app.ergana.ai %s\n' "${l#+}" >>"$h/.config/ergana/workspaces"
+        printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://app.ergana.ai"}' "${l#+}" "$(( $(date +%s) + 3600 ))" \
+          >"$h/.config/ergana/app.ergana.ai/${l#+}" ;;
+      *' '*) printf '%s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
+      *) printf 'app.ergana.ai %s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
+    esac
+  done
+}
+mko "$tmp/nw"
+nohome two +alpha +beta
+expect no-ergana-two-workspaces "$(HOME="$tmp/nh-two" LANG=C "$helper" "$tmp/nw")" \
+  '{"Accept-Language":"en","X-Ergana-Workspace-File":"missing","Authorization":"Bearer ergana-not-connected"}'
+nohome one +alpha
+out=$(HOME="$tmp/nh-one" "$helper" "$tmp/nw")
+has no-ergana-one-workspace "$out" '"Authorization":"Bearer TOK-alpha"'
+has no-ergana-one-workspace "$out" '"X-Ergana-Workspace":"alpha"'
+has no-ergana-one-workspace "$out" '"Accept-Language":'
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "no-ergana-one-workspace $hd" "$out" "$hd"; done
+valid no-ergana-one-workspace "$out"
+nohome notoken alpha
+out=$(HOME="$tmp/nh-notoken" "$helper" "$tmp/nw")
+has no-ergana-one-no-token "$out" '"Authorization":"Bearer ergana-not-connected"'
+has no-ergana-one-no-token "$out" '"X-Ergana-Workspace":"alpha"'
+has no-ergana-one-no-token "$out" '"Accept-Language":'
+norepo no-ergana-one-no-token "$out"
+nohome none
+out=$(HOME="$tmp/nh-none" "$helper" "$tmp/nw")
+hasnt no-ergana-none "$out" 'Authorization'
+hasnt no-ergana-none "$out" 'Workspace'
+has no-ergana-none "$out" 'X-Ergana-Repo'
+nohome otherhost "elsewhere.example beta" +alpha
+out=$(HOME="$tmp/nh-otherhost" "$helper" "$tmp/nw")
+has no-ergana-other-host-not-counted "$out" '"Authorization":"Bearer TOK-alpha"'
+nohome many +many
+out=$(HOME="$tmp/nh-many" "$helper" "$tmp/nw")
+has one-workspace-named-many "$out" '"Authorization":"Bearer TOK-many"'
+has one-workspace-named-many "$out" '"X-Ergana-Workspace":"many"'
+has one-workspace-named-many "$out" 'X-Ergana-Repo'
 # #31: one session's life. Claude Code runs the helper at the connection, before /ergana:login: the server's
 # handshake takes exactly this (the bearer and a valid slug, nothing about the repository). Once the login stored a
 # token, the helper's next run (Claude Code's, on a tool call's 401) carries it: no /mcp Reconnect in between.

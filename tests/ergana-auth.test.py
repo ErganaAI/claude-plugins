@@ -660,6 +660,40 @@ class FileStoreTest(Base):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "")
 
+    # header - (DR-0055.D1): the machine's one workspace for the origin's host, on one line
+    def test_header_dash_one_workspace(self):
+        self.put(access="ONE-ACCESS")
+        self.mod.index_add("other", host="elsewhere.example")  # another host's line is not counted
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "acme ONE-ACCESS\n"), r.stderr)
+
+    def test_header_dash_one_workspace_named_many(self):
+        self.put(slug="many", access="M-ACCESS")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "many M-ACCESS\n"), r.stderr)
+
+    def test_header_dash_two_workspaces_exit_3(self):
+        self.put(slug="acme")
+        self.put(slug="second")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (3, ""))
+
+    def test_header_dash_none_exit_4(self):
+        self.mod.index_add("other", host="elsewhere.example")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (4, ""))
+
+    def test_header_dash_no_token_exit_1_with_slug(self):
+        self.mod.index_add("acme")
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (1, "acme\n"))
+
+    def test_header_dash_refreshes_like_a_slug(self):
+        self.put(expires_in=100)
+        r = self.run_auth(["header", "-", "6"])
+        self.assertEqual((r.returncode, r.stdout), (0, "acme ACCESS-1\n"), r.stderr)
+        self.assertEqual(len(self.server.refreshes), 1)
+
     def test_5_concurrent_headers_refresh_once(self):
         self.put(expires_in=100)
         self.server.refresh_delay = 0.6

@@ -14,7 +14,8 @@
 # the workspace's own token (ergana-auth.py header, what is left of 8 s once git has answered; Claude Code
 # stops a helper at 10 s), or ergana-not-connected when there is none or the budget is spent (DR-0051.D1:
 # a committed .ergana applies like a local one, with no confirmation). Without .ergana the output is
-# unchanged. When a .ergana exists,
+# unchanged, except that the machine's one signed-in workspace stands in for it (DR-0055.D1, see below): with two or
+# more, Bearer ergana-not-connected, X-Ergana-Workspace-File: missing and Accept-Language only. When a .ergana exists,
 # X-Ergana-Repo, -Branch, -Root-Hash and -Folder (DR-0039.D1) are sent only when the final Authorization is a
 # workspace token, decided after the token step: with Bearer ergana-not-connected the output is the workspace
 # slug (when valid), Accept-Language and that bearer, nothing else. A hook cannot
@@ -90,11 +91,48 @@ ergana_find
 slug=
 token=
 lang=en
+missing=
+case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
+# No .ergana (DR-0055.D1): the machine's one workspace for the origin decides, `ergana-auth.py header - <left>`
+# printing "<slug> <token>" (exit 0), or the slug alone (exit 1, no token); the output is then the one a .ergana
+# naming that slug gives. Two or more workspaces (exit 3): the not-connected bearer, the cause and the language,
+# nothing of the repository. None (exit 4), any other exit or a cut-off: no .ergana's output, unchanged.
+if [ -z "$ergana" ]; then
+  budget_left
+  if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
+    if command -v perl >/dev/null 2>&1; then
+      res=$({ perl -e 'alarm shift; exec @ARGV or exit 1' "$left" python3 -I "$here/ergana-auth.py" header - "$left"; } 2>/dev/null; printf 'rc=%s' "$?")
+    else
+      res=$(python3 -I "$here/ergana-auth.py" header - "$left" 2>/dev/null; printf 'rc=%s' "$?")
+    fi
+    rc=${res##*rc=}
+    res=${res%rc=*}
+    case "$res" in *'
+') res=${res%?} ;; esac
+    case "$rc" in
+      3) ergana=none missing=1 ;;
+      0 | 1)
+        # one line, at most two fields, a valid slug, and a token only with exit 0
+        s=${res%% *}
+        t=
+        case "$res" in *' '*) t=${res#* } ;; esac
+        [ "$rc" = 0 ] && want=y || want=
+        have=
+        [ -n "$t" ] && have=y
+        case "$res" in *'
+'*) have=bad ;; esac
+        case "$t" in *' '*) have=bad ;; esac
+        if [ "$want" = "$have" ] && printf '%s' "$s" | LC_ALL=C grep -Eq '^[a-z0-9]{3,30}$'; then
+          ergana=none slug=$s token=$t
+        fi
+        ;;
+    esac
+  fi
+fi
 if [ -n "$ergana" ]; then
-  slug=$(ergana_slug "$ergana")
-  case "${LANG:-}" in fr*) lang=fr ;; *) lang=en ;; esac
+  [ "$ergana" = none ] || slug=$(ergana_slug "$ergana")
   # The workspace's token, within what is left of 8 s (the clock counts whole seconds: one is held back).
-  if [ -n "$slug" ]; then
+  if [ -n "$slug" ] && [ -z "$token" ] && [ "$ergana" != none ]; then
     budget_left
     if [ "$left" -ge 1 ] && command -v python3 >/dev/null 2>&1; then
       if command -v perl >/dev/null 2>&1; then
@@ -141,6 +179,7 @@ if [ -z "$ergana" ] || [ -n "$token" ]; then
 fi
 if [ -n "$ergana" ]; then
   [ -n "$slug" ] && out="${out:+$out,}\"X-Ergana-Workspace\":\"$slug\",\"Accept-Language\":\"$lang\""
+  [ -n "$missing" ] && out="${out:+$out,}\"Accept-Language\":\"$lang\",\"X-Ergana-Workspace-File\":\"missing\""
   out="${out:+$out,}\"Authorization\":\"Bearer ${token:-ergana-not-connected}\""
 fi
 printf '{%s}\n' "$out"
