@@ -879,6 +879,46 @@ class FileStoreTest(Base):
         self.assertIn("survived True", r.stdout)  # handlers back to the default afterwards
         self.assertEqual(self.get()["refresh"], "REFRESH-1")
 
+    def test_login_signals_ignored_while_storing_then_restored(self):
+        # from the code exchange to the store nothing may kill the login: the server superseded the old grant
+        repo = self.repo()
+        code = (
+            "import importlib.util, os, signal, sys\nsys.dont_write_bytecode = True\n"
+            "spec = importlib.util.spec_from_file_location('ea', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "orig = m.store_secret\n"
+            "def store(*a, **k):\n"
+            "    os.kill(os.getpid(), signal.SIGTERM); os.kill(os.getpid(), signal.SIGHUP)\n"
+            "    os.kill(os.getpid(), signal.SIGINT)\n"
+            "    return orig(*a, **k)\n"
+            "m.store_secret = store\n"
+            "rc = m.cmd_login([])\n"
+            "print('survived', rc, signal.getsignal(signal.SIGTERM) is signal.SIG_DFL)\n"
+        ) % SCRIPT
+        r = subprocess.run([sys.executable, "-c", code], cwd=repo, env=dict(os.environ), capture_output=True,
+                           text=True, timeout=60)
+        self.assertIn("survived 0 True", r.stdout, (r.returncode, r.stderr))
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertTrue(os.path.exists(os.path.join(repo, ".ergana")))
+
+    def test_login_store_waits_for_the_renewal_lock(self):
+        repo = self.repo()
+        lock = self.secret_file() + ".lock"
+        os.makedirs(lock)  # a live renewal: this process's pid, a fresh lock
+        with open(os.path.join(lock, "owner"), "w") as f:
+            f.write("%d %d\n" % (os.getpid(), int(time.time())))
+        p = self.popen_auth(["login"], cwd=repo)
+        deadline = time.time() + 30
+        while not self.server.exchanged and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        self.assertIsNone(self.get())  # not stored while the lock is held
+        shutil.rmtree(lock)
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        self.assertEqual(self.get()["access"], "ACCESS-1")
+        self.assertFalse(os.path.exists(lock))
+
     def test_f1_answer_just_inside_the_post_deadline_is_stored(self):
         self.put(expires_in=100)
         r = self._driver(6, delay=4.0)  # budget deadline 5.7 s, POST deadline 4.2 s
