@@ -10,6 +10,8 @@
 #   it carries (sent/<session>.<tool>) for cleared.sh, and record_check is denied when the repository
 #   moved since begin_check; check_done also says whether the repository has an origin remote;
 # - session_id is this session's, from the hook input, whatever the agent typed;
+# - report_step carries this session's relay key (inbox/<session>.key, session-context.sh), the one
+#   inbox.sh listens with, whatever the agent typed; a missing or malformed key file adds none;
 # - record_check's base_sha and diff_sha256 are computed here: the base is
 #   `git merge-base HEAD origin/HEAD` (else HEAD), the hash the repository's fingerprint, so a
 #   stop's fingerprint equals its check's when nothing changed.
@@ -116,6 +118,13 @@ if [ "$tool" = check_done ]; then
   if git remote get-url origin >/dev/null 2>&1; then origin=true; else origin=false; fi
   new=$(printf '%s' "$new" | strip fingerprint | strip start_fingerprint | strip origin)
   new=$(printf '%s' "$new" | sed 's/^{/{"fingerprint":"'"$sum"'"'"$start"',"origin":'"$origin"',/')
+fi
+if [ "$tool" = report_step ]; then
+  new=$(printf '%s' "$new" | strip relay_key)
+  key=$(cat "${CLAUDE_PLUGIN_DATA:-/nonexistent}/inbox/$session.key" 2>/dev/null)
+  if printf '%s' "$key" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$'; then
+    new=$(printf '%s' "$new" | sed 's/^{/{"relay_key":"'"$key"'",/')
+  fi
 fi
 new=$(printf '%s' "$new" | sed 's/^{/{"session_id":"'"$session"'",/; s/,}$/}/')
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":%s}}\n' "$new"

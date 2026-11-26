@@ -59,6 +59,9 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
 
 - Your team's rules reach your agent before it changes code, so it follows them from the first edit.
 - Before finishing, your agent checks its change against those rules. If something is off, it fixes it first.
+- While a session is idle, a background listener (`scripts/inbox.sh`, started by the Stop hook, one per session) holds a
+  request to Ergana with a key that is made once per session in the plugin's data folder (`inbox/`, mode 0600); when
+  another agent writes to your person, it wakes the session so it reads the message. Snooze through Ergana to stop it.
 - Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
 
 ## What a session sends
@@ -118,4 +121,5 @@ sh tests/fingerprint.test.sh
 sh tests/stop.test.sh
 sh tests/cleared.test.sh
 sh tests/ergana-tools.test.sh
+sh tests/inbox.test.sh
 ```
