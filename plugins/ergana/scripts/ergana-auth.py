@@ -16,6 +16,7 @@ access token that `header` prints; errors are one line with no response content.
 """
 import base64
 import hashlib
+import html
 import http.client
 import json
 import os
@@ -389,6 +390,92 @@ def client_id(o):
 
 # ---- login
 
+# The page the browser shows after /connect: tokens and markup of Ergana's /connect pages (card.css), self-contained
+# (system fonts, inline SVG, nothing from the network), dark by default, light through prefers-color-scheme.
+PAGE_CSS = """
+:root{color-scheme:dark;--primary:#8b7bf0;--bg:#0a0e16;--card:#131822;--muted:#1e2530;--line:#2f3744;
+--muted-fg:#98a2b2;--fg:#f7f9fb;--logo-top:#8b7bf0;--logo-mid:#c4baf8;--logo-bot:#6a55dd;--logo-eye:#46359c;
+--attention:#ff8a3d;--attention-soft:color-mix(in oklab,var(--attention) 11%,var(--card))}
+@media (prefers-color-scheme:light){:root{color-scheme:light;--primary:#5847c9;--bg:#f4f4f5;--card:#fff;
+--muted:#ececef;--line:#e4e4e7;--muted-fg:#4b5563;--fg:#0e131c;--logo-top:#5847c9;--logo-mid:#8f7eec;
+--logo-bot:#3f3095;--logo-eye:#d3ccf9;--attention:#a35200}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg)}
+body{font:.875rem/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+main{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:48px 16px}
+.column{width:100%;max-width:480px}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+svg.logo{display:block;height:32px;width:auto;margin:0 auto 24px;stroke:none}
+.logo-top{fill:var(--logo-top)}.logo-mid{fill:var(--logo-mid)}.logo-bot{fill:var(--logo-bot)}.logo-eye{fill:var(--logo-eye)}
+.steps{display:flex;justify-content:center;gap:6px;margin:0 0 14px;padding:0;list-style:none;font-size:12px;
+color:var(--muted-fg)}
+.steps li{display:flex;align-items:center;gap:6px}
+.steps li+li::before{content:"";width:18px;height:1px;background:var(--line)}
+.steps b{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1px solid var(--line);
+font-size:11px;font-weight:600}
+.steps .now{color:var(--fg);font-weight:600}
+.steps .now b{background:var(--primary);color:var(--bg);border-color:transparent}
+.steps .done b{background:var(--muted);color:var(--muted-fg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:.75rem;padding:32px;text-align:center}
+.card>*+*{margin-top:20px}
+.icon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 auto;border-radius:50%;
+background:var(--muted);color:var(--primary)}
+.icon.attention{background:var(--attention-soft);color:var(--attention)}
+.icon svg{width:24px;height:24px}
+h1{font-size:1.5rem;line-height:1.25;font-weight:600;letter-spacing:-.01em;margin:0;text-wrap:balance}
+p{margin:6px auto 0;max-width:40ch;font-size:15px;color:var(--muted-fg);text-wrap:balance}
+.copy{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:.5rem;text-align:left;
+background:color-mix(in oklab,var(--muted) 40%,transparent);padding:4px 4px 4px 12px}
+.copy code{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px}
+.copy button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:.5rem;
+background:none;color:var(--fg);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.copy button:hover{background:var(--muted)}
+.copy svg{width:14px;height:14px}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+@media (max-width:520px){.card{padding:24px}}
+"""
+MARK = ('<svg class="logo" viewBox="0 0 34 42" role="img" aria-label="Ergana"><rect class="logo-top" y="2" width="34" '
+        'height="8" rx="4"/><rect class="logo-mid" y="17" width="17" height="8" rx="4"/><circle class="logo-eye" '
+        'cx="27" cy="21" r="4.5"/><rect class="logo-bot" y="32" width="34" height="8" rx="4"/></svg>')
+ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">%s</svg>'  # Lucide (ISC licence)
+ICON_CHECK = ICON % '<path d="M20 6 9 17l-5-5"/>'
+ICON_ALERT = ICON % '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>'
+ICON_COPY = ICON % ('<rect width="14" height="14" x="8" y="8" rx="2"/>'
+                    '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>')
+COPY_JS = ("var b=document.querySelector('.copy button');b.onclick=function(){navigator.clipboard.writeText("
+           "'/ergana:login').then(function(){b.lastChild.textContent=b.dataset.done})}")
+
+
+def callback_page(workspace, reason, nonce):
+    """The HTML answer to /callback: connected to `workspace`, or nothing connected for `reason` (plain text)."""
+    esc = html.escape
+    now = 3 if workspace else 2
+    names = (t("Connexion", "Sign in"), t("Autorisation", "Allow"), t("Retour à Claude Code", "Back to Claude Code"))
+    steps = "".join('<li class="%s"%s><b>%s</b>%s</li>' % (
+        "now" if i == now else "done" if i < now else "", ' aria-current="step"' if i == now else "",
+        "✓" if i < now else i, n) for i, n in enumerate(names, 1))
+    if workspace:
+        title = t("Claude Code est connecté", "Claude Code is connected")
+        card = '<div class="icon">%s</div><div><h1>%s</h1><p>%s</p></div>' % (
+            ICON_CHECK, title, t("Ce dépôt utilise désormais <strong>%s</strong>. Revenir au terminal ; cet onglet "
+                                 "peut être fermé.", "This repository now uses <strong>%s</strong>. Go back to your "
+                                 "terminal; you can close this tab.") % esc(workspace))
+        script = ""
+    else:
+        title = t("Rien n'a été connecté", "Nothing was connected")
+        card = ('<div class="icon attention">%s</div><div><h1>%s</h1><p>%s %s</p></div><div class="copy">'
+                '<code>/ergana:login</code><button type="button" data-done="%s">%s<span>%s</span></button></div>') % (
+            ICON_ALERT, title, esc(reason), t("Pour réessayer, lancer ceci dans le dépôt :",
+                                              "To try again, run this in the repository:"),
+            t("Copié", "Copied"), ICON_COPY, t("Copier", "Copy"))
+        script = '<script nonce="%s">%s</script>' % (nonce, COPY_JS)
+    return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-'
+            'width, initial-scale=1"><title>%s · Ergana</title><style nonce="%s">%s</style></head><body><main><div '
+            'class="column">%s<ol class="steps" aria-label="%s">%s</ol><section class="card">%s</section></div></main>'
+            '%s</body></html>') % (t("fr", "en"), title, nonce, PAGE_CSS, MARK, t("Étapes", "Steps"), steps, card,
+                                   script)
+
+
 class Callback(BaseHTTPRequestHandler):
     timeout = 5  # an idle connection must not hold the single-threaded server
 
@@ -413,16 +500,31 @@ class Callback(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         elif q.get("code"):
-            srv.result = {"code": q["code"]}
-            ok = True
+            # The exchange runs here so the page can name the workspace; any error is kept for browser_login.
+            try:
+                srv.result = {"workspace": srv.exchange(q["code"])}
+            except Exception as e:
+                srv.result = {"error": e}
         else:
-            srv.result = {"error": t("connexion refusée dans le navigateur", "sign-in refused in the browser")}
-            ok = False
-        body = (t("Ergana : connexion terminée, cet onglet peut être fermé.",
-                  "Ergana: signed in, this tab can be closed.") if ok else
-                t("Ergana : connexion échouée.", "Ergana: sign-in failed.")).encode("utf-8")
-        self.send_response(200 if ok else 400)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+            srv.result = {"error": Fail(t("connexion refusée dans le navigateur", "sign-in refused in the browser"))}
+        ws = srv.result.get("workspace")
+        if ws:
+            reason = None
+        elif q.get("code"):
+            e = srv.result["error"]
+            reason = str(e).replace("\n", " ") if isinstance(e, Fail) else t("erreur interne", "internal error")
+            reason = reason[:1].upper() + reason[1:] + ("" if reason.endswith(".") else ".")
+        else:
+            reason = t("L'accès a été refusé dans le navigateur.", "Access was denied in the browser.")
+        nonce = secrets.token_urlsafe(16)
+        body = callback_page(ws, reason, nonce).encode("utf-8")
+        self.send_response(200 if ws else 400)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'none'; style-src 'nonce-%s'; script-src 'nonce-%s'; base-uri 'none'; "
+                         "form-action 'none'; frame-ancestors 'none'" % (nonce, nonce))
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -451,6 +553,51 @@ def browser_login(o, slug, fslug=None):
     srv.state = secrets.token_urlsafe(24)
     srv.result = None
     redirect = "http://127.0.0.1:%d/callback" % srv.server_address[1]
+
+    def exchange(code):
+        """The code for the pair, stored under the workspace the token names, which is returned."""
+        host = host_of(o)
+        # From the exchange until the pair is stored nothing may kill this process: the server has superseded
+        # the previous grant, and a pair lost here locks the person out.
+        old = {s: signal.signal(s, signal.SIG_IGN)
+               for s in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            data, secret = token_request(o, {
+                "grant_type": "authorization_code", "code": code, "redirect_uri": redirect,
+                "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
+            got = data.get("ergana_workspace")
+            refusal = None
+            if not isinstance(got, str) or not SLUG_RE.fullmatch(got):
+                refusal = t("réponse du serveur invalide", "invalid server response")
+            elif slug and got != slug:
+                refusal = (t("Ce dépôt est lié à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                             "This repository is linked to the %s workspace; the account signed in belongs to the %s workspace.")
+                           if fslug else
+                           t("Connexion demandée à l'espace %s ; le compte connecté appartient à l'espace %s.",
+                             "Sign-in asked for the %s workspace; the account signed in belongs to the %s workspace.")
+                           ) % (slug, got)
+                delete_secret(got, host)  # the server superseded it
+                index_remove(got, host)
+            if refusal:
+                try:
+                    post_form(o, "/oauth/revoke", {"token": secret["refresh"], "token_type_hint": "refresh_token",
+                                                   "client_id": client_id(o)}, 5)
+                except Fail as e:
+                    refusal += "\n" + t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % e
+                raise Fail(refusal)
+            lock = secret_file(got, host) + ".lock"
+            host_dir(host)
+            acquire(lock, time.monotonic() + 10)
+            try:
+                store_secret(got, secret, host)
+            finally:
+                shutil.rmtree(lock, ignore_errors=True)
+        finally:
+            for sig, h in old.items():
+                signal.signal(sig, h)
+        return got
+
+    srv.exchange = exchange
     url = o + "/oauth/authorize?" + urllib.parse.urlencode({
         "response_type": "code", "client_id": client_id(o), "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": srv.state,
@@ -471,47 +618,8 @@ def browser_login(o, slug, fslug=None):
     finally:
         srv.server_close()
     if "error" in srv.result:
-        raise Fail(srv.result["error"])
-    host = host_of(o)
-    # From the exchange until the pair is stored nothing may kill this process: the server has superseded
-    # the previous grant, and a pair lost here locks the person out.
-    old = {s: signal.signal(s, signal.SIG_IGN)
-           for s in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-    try:
-        data, secret = token_request(o, {
-            "grant_type": "authorization_code", "code": srv.result["code"], "redirect_uri": redirect,
-            "client_id": client_id(o), "code_verifier": verifier, "resource": o + "/mcp"}, 15)
-        got = data.get("ergana_workspace")
-        refusal = None
-        if not isinstance(got, str) or not SLUG_RE.fullmatch(got):
-            refusal = t("réponse du serveur invalide", "invalid server response")
-        elif slug and got != slug:
-            refusal = (t("Ce dépôt est lié à l'espace %s ; le compte connecté appartient à l'espace %s.",
-                         "This repository is linked to the %s workspace; the account signed in belongs to the %s workspace.")
-                       if fslug else
-                       t("Connexion demandée à l'espace %s ; le compte connecté appartient à l'espace %s.",
-                         "Sign-in asked for the %s workspace; the account signed in belongs to the %s workspace.")
-                       ) % (slug, got)
-            delete_secret(got, host)  # the server superseded it
-            index_remove(got, host)
-        if refusal:
-            try:
-                post_form(o, "/oauth/revoke", {"token": secret["refresh"], "token_type_hint": "refresh_token",
-                                               "client_id": client_id(o)}, 5)
-            except Fail as e:
-                refusal += "\n" + t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % e
-            raise Fail(refusal)
-        lock = secret_file(got, host) + ".lock"
-        host_dir(host)
-        acquire(lock, time.monotonic() + 10)
-        try:
-            store_secret(got, secret, host)
-        finally:
-            shutil.rmtree(lock, ignore_errors=True)
-    finally:
-        for sig, h in old.items():
-            signal.signal(sig, h)
-    return got
+        raise srv.result["error"]
+    return srv.result["workspace"]
 
 
 def cmd_login(args):

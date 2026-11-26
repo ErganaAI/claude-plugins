@@ -86,6 +86,10 @@ nothing is stored. `/ergana:status`
 shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
 token and removes it (`.ergana` stays). After a login, reconnect ergana in `/mcp` or open a new session.
 
+From 0.19.0 the browser tab returns to a page of the sign-in's last step: connected, with the workspace's name, or
+nothing connected, with the reason and `/ergana:login` to copy. The page is served by the script on `127.0.0.1`,
+loads nothing from the network and runs only its Copy button, under a nonce Content-Security-Policy.
+
 The token is kept per workspace: in the macOS Keychain (service `ergana`, account `<slug>@<host>`), else in
 `~/.config/ergana/<host>/<slug>` (mode 0600). `~/.config/ergana/workspaces` lists the connected workspaces, one
 `<host> <slug>` line each, with no secret. The origin is `https://app.ergana.ai`, fixed in `scripts/ergana-auth.py`;
