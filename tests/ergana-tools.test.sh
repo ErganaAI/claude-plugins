@@ -38,4 +38,16 @@ has origin-false "$(call check_done "")" '"origin":false'
 git -C "$repo" remote add origin https://example.com/r.git
 has origin-true "$(call check_done "")" '"origin":true'
 expect check-done-writes-sent "$(cat "$tmp/data/sent/s1.check_done")" "$("$fp" "$repo")"
+
+# An agent's call never carries the working folder (cwd): stripped with or without session_id.
+# raw <tool> <tool_input>
+raw() {
+  printf '{"session_id":"s1","cwd":"%s","agent_type":"","tool_name":"mcp__plugin_ergana_ergana__%s","tool_input":%s}' \
+    "$repo" "$1" "$2" | sh "$script"
+}
+expect cwd-stripped-with-session "$(raw report_step '{"session_id":"x","cwd":"/Users/a/r","task":"x"}')" \
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"session_id":"s1","task":"x"}}}'
+expect cwd-stripped-no-session "$(raw find_decisions '{"repository":"r","cwd":"/Users/a/r"}')" \
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"repository":"r"}}}'
+expect no-cwd-untouched "$(raw find_decisions '{"repository":"r"}')" ''
 exit $failed

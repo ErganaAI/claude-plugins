@@ -7,13 +7,18 @@ helper="$here/plugins/ergana/scripts/workspace-headers.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 failed=0
+# The helper reads ~/.config/ergana (the index, the stored tokens): a throwaway HOME, no real Keychain.
+export HOME="$tmp/home" ERGANA_AUTH_TEST=1 ERGANA_AUTH_KEYCHAIN=0 GIT_CONFIG_GLOBAL=/dev/null
+unset ERGANA_ORIGIN
+mkdir "$HOME"
 
 # expect <name> <got> <want>
 expect() {
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got $2, want $3"; failed=1; fi
 }
 
-# rooted <repository folder> <json>: the json with the root's hash added, as the helper sends it.
+# rooted <repository folder> <json> [folder name]: the json with the root's hash and the folder's name added, as the
+# helper sends them (the name of the repository folder unless given).
 rooted() {
   top=$(git -C "$1" rev-parse --show-toplevel)
   if command -v sha256sum >/dev/null 2>&1; then
@@ -21,7 +26,7 @@ rooted() {
   else
     h=$(printf '%s' "$top" | shasum -a 256 | cut -c1-64)
   fi
-  printf '%s,"X-Ergana-Root-Hash":"%s"}' "${2%\}}" "$h"
+  printf '%s,"X-Ergana-Root-Hash":"%s","X-Ergana-Folder":"%s"}' "${2%\}}" "$h" "${3:-${1##*/}}"
 }
 
 # check <name> <origin, or - for none> <want, without the root's hash>
@@ -65,14 +70,14 @@ expect detached "$("$helper" "$tmp/detached")" \
 # path itself.
 mkdir -p "$tmp/https-plain/apps/admin"
 sub=$("$helper" "$tmp/https-plain/apps/admin")
-expect subfolder "$sub" "$(rooted "$tmp/https-plain" '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}')"
+expect subfolder "$sub" "$(rooted "$tmp/https-plain" '{"X-Ergana-Repo":"https://github.com/acme/web.git","X-Ergana-Branch":"main"}' admin)"
 case "$sub" in *"$tmp"*) expect no-local-path leaked none ;; *) expect no-local-path none none ;; esac
 
-# A folder outside git sends nothing; an unexpanded ${CLAUDE_PROJECT_DIR} falls back to the
+# A folder outside git sends only its name; an unexpanded ${CLAUDE_PROJECT_DIR} falls back to the
 # variable, then to the working folder.
 mkdir "$tmp/plain"
-expect not-git "$("$helper" "$tmp/plain")" '{}'
-expect unexpanded "$(cd "$tmp/plain" && CLAUDE_PROJECT_DIR='' "$helper" '${CLAUDE_PROJECT_DIR}')" '{}'
+expect not-git "$("$helper" "$tmp/plain")" '{"X-Ergana-Folder":"plain"}'
+expect unexpanded "$(cd "$tmp/plain" && CLAUDE_PROJECT_DIR='' "$helper" '${CLAUDE_PROJECT_DIR}')" '{"X-Ergana-Folder":"plain"}'
 
 # .ergana (DR-0035.D1): the workspace header, the language, and the refusal when the file is bad.
 # has <name> <json> <fragment>, hasnt <name> <json> <fragment>; valid <name> <json>
@@ -139,4 +144,187 @@ for l in fr_FR.UTF-8:fr en_US.UTF-8:en :en 'x"y:en'; do
   has "lang[${l%:*}]" "$out" "\"Accept-Language\":\"${l##*:}\""
   valid "lang[${l%:*}]" "$out"
 done
+# Tokens (DR-0035.D1, DR-0037.D1): a stored token is sent as Authorization; without one, or when a committed
+# .ergana is not confirmed on a machine with 2+ workspaces, ergana-not-connected, never the shared sign-in.
+cfg="$HOME/.config/ergana"
+putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed in the index
+  mkdir -p "$cfg/app.ergana.ai"
+  printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://app.ergana.ai"}' "$1" "$(( $(date +%s) + 3600 ))" \
+    >"$cfg/app.ergana.ai/$1"
+  printf 'app.ergana.ai %s\n' "$1" >>"$cfg/workspaces"
+}
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -c1-64; else shasum -a 256 "$1" | cut -c1-64; fi; }
+trustline() { # <repo>: "<sha256 of the git common dir> <sha256 of its .ergana>"
+  c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
+  if command -v sha256sum >/dev/null 2>&1; then k=$(printf '%s' "$c" | sha256sum | cut -c1-64); else k=$(printf '%s' "$c" | shasum -a 256 | cut -c1-64); fi
+  printf '%s %s\n' "$k" "$(sha "$1/.ergana")"
+}
+trustfile() { echo "$HOME/.config/ergana/trusted"; }
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+
+mk "$tmp/tok"
+printf 'workspace = acme\n' >"$tmp/tok/.ergana"
+out=$("$helper" "$tmp/tok")
+has no-token "$out" '"Authorization":"Bearer ergana-not-connected"'
+has no-token "$out" '"X-Ergana-Workspace":"acme"'
+hasnt no-token "$out" 'TOK-'
+putsecret acme
+out=$("$helper" "$tmp/tok")
+has token "$out" '"Authorization":"Bearer TOK-acme"'
+has token "$out" '"X-Ergana-Workspace":"acme"'
+has token "$out" '"Accept-Language":'
+hasnt token "$out" 'not-connected'
+valid token "$out"
+mk "$tmp/tok-none"
+hasnt no-ergana-with-tokens "$("$helper" "$tmp/tok-none")" 'Authorization'
+
+# 2+ workspaces: an untracked .ergana is sent; a committed one only once confirmed for its exact content.
+putsecret second
+has two-untracked "$("$helper" "$tmp/tok")" '"Authorization":"Bearer TOK-acme"'
+mk "$tmp/com"
+printf 'workspace = acme\n' >"$tmp/com/.ergana"
+git -C "$tmp/com" add .ergana
+git -C "$tmp/com" commit -q -m ergana
+out=$("$helper" "$tmp/com")
+has two-committed-unconfirmed "$out" '"Authorization":"Bearer ergana-not-connected"'
+hasnt two-committed-unconfirmed "$out" 'TOK-'
+# the former in-repository record (sha alone) confirms nothing
+oldrec=$(git -C "$tmp/com" rev-parse --path-format=absolute --git-path info/ergana-trusted)
+mkdir -p "$(dirname "$oldrec")"
+sha "$tmp/com/.ergana" >"$oldrec"
+has two-committed-old-record "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
+mkdir -p "$(dirname "$(trustfile "$tmp/com")")"
+trustline "$tmp/com" >"$(trustfile "$tmp/com")"
+has two-committed-confirmed "$("$helper" "$tmp/com")" '"Authorization":"Bearer TOK-acme"'
+printf '# changed\n' >>"$tmp/com/.ergana"
+git -C "$tmp/com" commit -q -am changed
+has two-committed-modified "$("$helper" "$tmp/com")" '"Authorization":"Bearer ergana-not-connected"'
+# a linked worktree of that repository shares the repository's confirmation
+(cd "$tmp/com" && git worktree add -q "$tmp/comwt" -b comwt)
+has two-committed-worktree "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer ergana-not-connected"'
+trustline "$tmp/com" >>"$(trustfile "$tmp/com")"
+has two-committed-worktree-confirmed "$("$helper" "$tmp/comwt")" '"Authorization":"Bearer TOK-acme"'
+# committed, then dropped from the index only: still HEAD's, so still needs the confirmation
+mk "$tmp/com-rm"
+printf 'workspace = acme\n' >"$tmp/com-rm/.ergana"
+git -C "$tmp/com-rm" add .ergana
+git -C "$tmp/com-rm" commit -q -m ergana
+git -C "$tmp/com-rm" rm -q --cached .ergana
+has two-in-head-not-index "$("$helper" "$tmp/com-rm")" '"Authorization":"Bearer ergana-not-connected"'
+# a dangling .ergana symlink names no workspace
+mk "$tmp/dangling"
+ln -s "$tmp/nowhere" "$tmp/dangling/.ergana"
+out=$("$helper" "$tmp/dangling")
+has dangling-symlink "$out" '"Authorization":"Bearer ergana-not-connected"'
+hasnt dangling-symlink "$out" 'X-Ergana-Workspace'
+# a committed .ergana with one workspace on the machine needs no confirmation
+mkdir -p "$tmp/home1/.config/ergana"
+cp -R "$cfg/app.ergana.ai" "$tmp/home1/.config/ergana/"
+printf 'app.ergana.ai acme\n' >"$tmp/home1/.config/ergana/workspaces"
+mk "$tmp/com1"
+printf 'workspace = acme\n' >"$tmp/com1/.ergana"
+git -C "$tmp/com1" add .ergana
+git -C "$tmp/com1" commit -q -m ergana
+has one-committed "$(HOME="$tmp/home1" "$helper" "$tmp/com1")" '"Authorization":"Bearer TOK-acme"'
+
+# A slow git (every call hangs): the whole helper still answers in under 8 s, with the token.
+mkdir -p "$tmp/slow/bin" "$tmp/home3/.config/ergana"
+printf '#!/bin/sh\nexec sleep 3\n' >"$tmp/slow/bin/git"
+chmod +x "$tmp/slow/bin/git"
+printf 'workspace = acme\n' >"$tmp/slow/.ergana"
+cp -R "$cfg/app.ergana.ai" "$tmp/home3/.config/ergana/"
+printf 'app.ergana.ai acme\n' >"$tmp/home3/.config/ergana/workspaces"
+t0=$(date +%s)
+out=$(PATH="$tmp/slow/bin:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slow")
+t1=$(date +%s)
+if [ $((t1 - t0)) -lt 8 ]; then echo "ok   slow-git in $((t1 - t0)) s"; else echo "FAIL slow-git: $((t1 - t0)) s"; failed=1; fi
+has slow-git "$out" '"Authorization":"Bearer TOK-acme"'
+valid slow-git "$out"
+
+# X-Ergana-Folder: the project folder's name, percent-encoded byte by byte; none for a home folder
+# or a root; none before a committed .ergana is confirmed (DR-0037.D1), a spent budget included.
+mk "$tmp/mono"
+has folder "$("$helper" "$tmp/mono")" '"X-Ergana-Folder":"mono"'
+mk "$tmp/données-clients"
+has folder-encoded "$("$helper" "$tmp/données-clients")" '"X-Ergana-Folder":"donn%C3%A9es-clients"'
+mk "$tmp/home/john"
+hasnt folder-user-home "$("$helper" "$tmp/home/john")" 'X-Ergana-Folder'
+mkdir -p "$tmp/Users"
+mk "$tmp/Users/john"
+hasnt folder-users "$("$helper" "$tmp/Users/john")" 'X-Ergana-Folder'
+mk "$HOME"
+hasnt folder-home "$("$helper" "$HOME")" 'X-Ergana-Folder'
+hasnt folder-root "$("$helper" /)" 'X-Ergana-Folder'
+# two workspaces are connected here: a committed .ergana not in trusted sends no folder
+hasnt folder-unconfirmed "$("$helper" "$tmp/com-rm")" 'X-Ergana-Folder'
+# confirmed, the folder goes with the token
+has folder-confirmed "$("$helper" "$tmp/comwt")" '"X-Ergana-Folder":"comwt"'
+# a spent budget counts as unconfirmed, even with one workspace (which needs no confirmation): a date that
+# jumps 100 s after the helper's start leaves nothing of its 8 s
+mk "$tmp/slowcom"
+printf 'workspace = acme\n' >"$tmp/slowcom/.ergana"
+(cd "$tmp/slowcom" && git add .ergana && git commit -q -m ergana)
+mkdir -p "$tmp/clock"
+printf '#!/bin/sh\nif [ -e "%s/seen" ]; then echo 1100; else : >"%s/seen"; echo 1000; fi\n' "$tmp/clock" "$tmp/clock" >"$tmp/clock/date"
+chmod +x "$tmp/clock/date"
+slowrun=$(PATH="$tmp/clock:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slowcom")
+hasnt folder-budget-spent "$slowrun" 'X-Ergana-Folder'
+has folder-budget-spent "$slowrun" 'ergana-not-connected'
+# the same repository on the real clock sends the folder with the token
+has folder-budget-left "$(HOME="$tmp/home3" "$helper" "$tmp/slowcom")" '"X-Ergana-Folder":"slowcom"'
+
+# DR-0039.D1: the repository's headers go only with a workspace token, or with no .ergana.
+mko() { mk "$1" && git -C "$1" remote add origin https://github.com/acme/web.git; }
+norepo() { # <name> <json>: no repository header, the not-connected bearer
+  for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do hasnt "$1 $hd" "$2" "$hd"; done
+  has "$1 bearer" "$2" '"Authorization":"Bearer ergana-not-connected"'
+  hasnt "$1 token" "$2" 'TOK-'
+  valid "$1" "$2"
+}
+# two workspaces (acme, second) are connected here
+mko "$tmp/r-unc"
+printf 'workspace = acme\n' >"$tmp/r-unc/.ergana"
+git -C "$tmp/r-unc" add .ergana
+git -C "$tmp/r-unc" commit -q -m ergana
+out=$("$helper" "$tmp/r-unc")
+norepo unconfirmed-no-repo "$out"
+has unconfirmed-no-repo "$out" '"X-Ergana-Workspace":"acme"'
+has unconfirmed-no-repo "$out" '"Accept-Language":'
+mko "$tmp/r-notok"
+printf 'workspace = nobody\n' >"$tmp/r-notok/.ergana"
+norepo no-token-no-repo "$("$helper" "$tmp/r-notok")"
+mko "$tmp/r-bad"
+printf 'workspace = Bad\n' >"$tmp/r-bad/.ergana"
+out=$("$helper" "$tmp/r-bad")
+norepo malformed-no-repo "$out"
+hasnt malformed-no-repo "$out" 'X-Ergana-Workspace'
+mko "$tmp/r-budget"
+printf 'workspace = acme\n' >"$tmp/r-budget/.ergana"
+git -C "$tmp/r-budget" add .ergana
+git -C "$tmp/r-budget" commit -q -m ergana
+rm -f "$tmp/clock/seen"
+norepo budget-no-repo "$(PATH="$tmp/clock:$PATH" "$helper" "$tmp/r-budget")"
+# tracked unknown: every git call cut off
+mko "$tmp/r-slow"
+printf 'workspace = acme\n' >"$tmp/r-slow/.ergana"
+norepo unknown-no-repo "$(PATH="$tmp/slow/bin:$PATH" "$helper" "$tmp/r-slow")"
+# git refuses the checkout (exit 128 for every call), with a token for the slug
+mkdir -p "$tmp/refuse"
+printf '#!/bin/sh\nexit 128\n' >"$tmp/refuse/git"
+chmod +x "$tmp/refuse/git"
+mko "$tmp/r-ref"
+printf 'workspace = acme\n' >"$tmp/r-ref/.ergana"
+norepo git-refused-root "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref")"
+mkdir -p "$tmp/r-ref/apps/web"
+printf 'workspace = acme\n' >"$tmp/r-ref/apps/web/.ergana"
+norepo git-refused-subfolder "$(PATH="$tmp/refuse:$PATH" "$helper" "$tmp/r-ref/apps/web")"
+# confirmed with a token: all four headers; no .ergana: repo, branch, hash
+mko "$tmp/r-ok"
+printf 'workspace = acme\n' >"$tmp/r-ok/.ergana"
+out=$("$helper" "$tmp/r-ok")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash X-Ergana-Folder; do has "confirmed-repo $hd" "$out" "$hd"; done
+has confirmed-repo "$out" '"Authorization":"Bearer TOK-acme"'
+mko "$tmp/r-none"
+out=$("$helper" "$tmp/r-none")
+for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
 exit $failed
