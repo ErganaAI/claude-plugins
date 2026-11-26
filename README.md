@@ -63,11 +63,44 @@ session's start and with the last one a passing check cleared (`${CLAUDE_PLUGIN_
 once per fingerprint and the agent's `check_done` decides. A folder that is no git checkout, or has no commit, is not
 gated. Shell commands are no longer sent to Ergana's `before_edit`: the fingerprint sees what they changed.
 
-A `.ergana` file (`workspace = <slug>`), in the project folder or in the main checkout of a linked worktree, makes the MCP headers helper send `X-Ergana-Workspace` and `Accept-Language`; a `.ergana` that is malformed sends `Authorization: Bearer ergana-not-connected` instead of falling back to the shared sign-in.
+## One sign-in per workspace
+
+`/ergana:login` signs in to one workspace in the machine's default browser (OAuth with PKCE, the client `ergana-cli`),
+writes `.ergana` (`workspace = <slug>`) at the repository's root and lists it in `.git/info/exclude`. `/ergana:status`
+shows the repository's workspace, where the link comes from and whether it is connected; `/ergana:logout` revokes the
+token and removes it (`.ergana` stays). After a login, reconnect ergana in `/mcp` or open a new session.
+
+The token is kept per workspace: in the macOS Keychain (service `ergana`, account `<slug>@<host>`), else in
+`~/.config/ergana/<host>/<slug>` (mode 0600). `~/.config/ergana/workspaces` lists the connected workspaces, one
+`<host> <slug>` line each, with no secret. The origin is `https://app.ergana.ai`, fixed in `scripts/ergana-auth.py`;
+a repository can only choose a workspace, never where a token is sent. Each secret is renewed or revoked only when its
+stored origin is exactly the origin in use (scheme included), the Keychain is reached at `/usr/bin/security`, and the
+script runs as `python3 -I`. A renewal that has started is not interrupted by a signal until the new pair is stored.
+
+A `.ergana` file, in the project folder or in the main checkout of a linked worktree (a file git tracks wins over one
+it does not), makes the MCP headers helper (`scripts/workspace-headers.sh`) send `X-Ergana-Workspace`, `Accept-Language`
+and `Authorization: Bearer <the workspace's token>`. The token is renewed by the helper itself when it expires within
+5 minutes, under a lock so that two sessions renew it once; the whole helper stays under 8 s (Claude Code stops it at
+10 s). With no usable token, a `.ergana` that is malformed, or a committed `.ergana` not yet confirmed (below), the
+helper sends `Authorization: Bearer ergana-not-connected` and never falls back to the shared sign-in. A repository with
+no `.ergana` keeps the shared sign-in.
+
+On a machine with two or more connected workspaces, a `.ergana` committed to git is sent only after the person
+confirmed it once for this repository, machine and file content: the session start asks « Envoyer ce dépôt à l'espace
+<slug> ? » (or "Send this repository to the <slug> workspace?") with `AskUserQuestion`, and a PostToolUse hook
+(`scripts/trust-answer.sh`) records a line in `~/.config/ergana/trusted` (mode 0600, folder 0700), outside the repository:
+the sha256 of the absolute git common dir path, a space, and the sha256 of the file content, when the answer is the
+agreeing option. A `.ergana` counts as committed when it is in the index or still in `HEAD`. That file only guards
+against a silent pick: an agent with an unrestricted shell on the machine could still write it, and the question does not
+protect against a compromised local shell. The session start also names the workspace and where the link comes from, and offers `/ergana:login` for a
+`.ergana` with no token, or for no `.ergana` when a workspace is connected; « Plus tard » is remembered in
+`.git/info/ergana-later`.
 
 ## Tests
 
 ```
+python3 tests/ergana-auth.test.py
+sh tests/trust-answer.test.sh
 sh tests/workspace-headers.test.sh
 sh tests/session-context.test.sh
 sh tests/fingerprint.test.sh
