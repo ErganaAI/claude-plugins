@@ -1,6 +1,6 @@
 #!/bin/sh
 # Stop (async, asyncRewake): the session's listener. While the session is idle, it holds Ergana's
-# GET /v1/relay/listen with the session's relay key (inbox/<session>.key, session-context.sh).
+# GET /v1/relay/listen with the session's relay key (inbox/<session>.key, made by relay-key.sh).
 # When another agent writes to the session's person, Ergana answers 200 with a fixed signal: it is
 # printed on stderr and the script exits 2, which wakes Claude with it, so it calls get_messages.
 # Any other end exits 0, which wakes nothing.

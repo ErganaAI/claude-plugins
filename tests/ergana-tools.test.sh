@@ -40,13 +40,11 @@ has origin-true "$(call check_done "")" '"origin":true'
 expect check-done-writes-sent "$(cat "$tmp/data/sent/s1.check_done")" "$("$fp" "$repo")"
 
 # report_step carries the session's relay key from inbox/s1.key, and only report_step does; the agent's own
-# relay_key is dropped; a missing or malformed key file adds none.
+# relay_key is dropped; a malformed key file is replaced by a good one.
 KEY=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ
 mkdir -p "$tmp/data/inbox"
 step() { printf '{"session_id":"s1","cwd":"%s","tool_name":"mcp__plugin_ergana_ergana__%s","tool_input":%s}' "$repo" "$1" "$2" | sh "$script"; }
 hasnt() { case $2 in *"$3"*) echo "FAIL $1: '$2' holds '$3'"; failed=1 ;; *) echo "ok   $1" ;; esac; }
-has relay-no-file-no-key "$(step report_step '{"session_id":"x","task":"t"}')" '"session_id":"s1","task":"t"}'
-hasnt relay-no-file "$(step report_step '{"session_id":"x","task":"t"}')" relay_key
 printf '%s\n' "$KEY" >"$tmp/data/inbox/s1.key"
 has relay-added "$(step report_step '{"session_id":"x","task":"t"}')" '{"session_id":"s1","relay_key":"'"$KEY"'","task":"t"}'
 has relay-agent-key-replaced "$(step report_step '{"session_id":"x","relay_key":"evil","task":"t"}')" '{"session_id":"s1","relay_key":"'"$KEY"'","task":"t"}'
@@ -54,14 +52,27 @@ hasnt relay-agent-key-gone "$(step report_step '{"session_id":"x","task":"t","re
 hasnt relay-other-tool "$(step get_messages '{"session_id":"x"}')" relay_key
 hasnt relay-not-check-done "$(call check_done "")" relay_key
 printf 'short\n' >"$tmp/data/inbox/s1.key"
-hasnt relay-malformed "$(step report_step '{"session_id":"x","task":"t"}')" relay_key
+has relay-malformed-replaced "$(step report_step '{"session_id":"x","task":"t"}')" '"relay_key":"'
+printf '%s' "$(cat "$tmp/data/inbox/s1.key")" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' && echo "ok   relay-malformed-file-fixed" || { echo "FAIL relay-malformed-file-fixed"; failed=1; }
+# A report_step with no key file makes it: 43 base64url characters, mode 0600, in the call, never on stderr; an
+# existing key is kept.
+rm -f "$tmp/data/inbox/s1.key"
+out=$(step report_step '{"session_id":"x","task":"t"}' 2>"$tmp/err")
+made=$(cat "$tmp/data/inbox/s1.key" 2>/dev/null)
+printf '%s' "$made" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' && echo "ok   relay-created" || { echo "FAIL relay-created: '$made'"; failed=1; }
+has relay-created-in-call "$out" '{"session_id":"s1","relay_key":"'"$made"'","task":"t"}'
+case $(ls -l "$tmp/data/inbox/s1.key" 2>/dev/null) in -rw-------*) echo "ok   relay-created-0600" ;; *) echo "FAIL relay-created-0600"; failed=1 ;; esac
+hasnt relay-created-quiet "$(cat "$tmp/err")" "$made"
+out=$(step report_step '{"session_id":"x","task":"t"}')
+expect relay-kept "$(cat "$tmp/data/inbox/s1.key")" "$made"
+has relay-kept-in-call "$out" '"relay_key":"'"$made"'"'
 # An agent's call never carries the working folder (cwd): stripped with or without session_id.
 # raw <tool> <tool_input>
 raw() {
   printf '{"session_id":"s1","cwd":"%s","agent_type":"","tool_name":"mcp__plugin_ergana_ergana__%s","tool_input":%s}' \
     "$repo" "$1" "$2" | sh "$script"
 }
-expect cwd-stripped-with-session "$(raw report_step '{"session_id":"x","cwd":"/Users/a/r","task":"x"}')" \
+expect cwd-stripped-with-session "$(CLAUDE_PLUGIN_DATA= raw report_step '{"session_id":"x","cwd":"/Users/a/r","task":"x"}')" \
   '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"session_id":"s1","task":"x"}}}'
 expect cwd-stripped-no-session "$(raw find_decisions '{"repository":"r","cwd":"/Users/a/r"}')" \
   '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"repository":"r"}}}'

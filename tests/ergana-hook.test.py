@@ -110,14 +110,14 @@ def repo(workspace="acme"):
     return p
 
 
-def run(origin, cwd, args, lang="en", timeout=10, hook=None, extra_env=None):
+def run(origin, cwd, args, lang="en", timeout=10, hook=None, extra_env=None, tool="before_edit"):
     env = {"PATH": os.environ["PATH"], "HOME": HOME, "ERGANA_AUTH_TEST": "1", "ERGANA_AUTH_KEYCHAIN": "0",
            "ERGANA_ORIGIN": origin, "LANG": lang, "GIT_CONFIG_GLOBAL": "/dev/null", "CLAUDE_PROJECT_DIR": cwd}
     env.update(extra_env or {})
     hook = {"session_id": "s1", "cwd": cwd, "tool_input": {"file_path": "/x/y.py"}, "agent_type": "main"} \
         if hook is None else hook
     t0 = time.monotonic()
-    p = subprocess.run([sys.executable, "-I", SCRIPT, "before_edit", str(timeout)] + args,
+    p = subprocess.run([sys.executable, "-I", SCRIPT, tool, str(timeout)] + args,
                        input=json.dumps(hook), capture_output=True, text=True, env=env, cwd=cwd,
                        timeout=timeout + 10)
     return p, time.monotonic() - t0
@@ -318,6 +318,18 @@ for o in ("", "https://app.ergana.ai", "https://App.Ergana.ai:443", "https://app
     p, _ = run(o, r, EDIT)
     check("test-mode-never-production %r" % o, p.returncode == 1 and "never production" in p.stderr
           and p.stdout == "" and len(srv.calls) == n, (p.returncode, p.stderr))
+
+# U: session_state says whether the session is unattended (a boolean, never an environment value); no other tool does
+for name, env, want in (("sdk-cli", {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}, True),
+                        ("cli-flag", {"CLAUDE_CODE_ENTRYPOINT": "cli", "ERGANA_UNATTENDED": "1"}, True),
+                        ("sdk-ts", {"CLAUDE_CODE_ENTRYPOINT": "sdk-ts"}, False),
+                        ("cli", {"CLAUDE_CODE_ENTRYPOINT": "cli"}, False),
+                        ("flag-not-1", {"ERGANA_UNATTENDED": "0"}, False)):
+    run(srv.origin, r, ["state=working"], tool="session_state", extra_env=env)
+    a = last(srv)["body"]["params"]["arguments"]
+    check("unattended-" + name, a.get("unattended") is want and a.get("state") == "working", a)
+run(srv.origin, r, EDIT, extra_env={"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"})
+check("unattended-before_edit-none", "unattended" not in last(srv)["body"]["params"]["arguments"])
 
 shutil.rmtree(TMP, ignore_errors=True)
 sys.exit(1 if failed else 0)
