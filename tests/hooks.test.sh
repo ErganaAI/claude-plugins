@@ -1,28 +1,52 @@
 #!/bin/sh
-# plugins/ergana/hooks/hooks.json: no mcp_tool hook sends the working folder; the only path any hook
-# sends is before_edit's file_path (DR-0038.D1):
+# plugins/ergana/hooks/hooks.json: no mcp_tool hook; every call to Ergana is a command hook running
+# ergana-hook.py with today's tool, fields, values and timeout; no hook sends the working folder, the only
+# path any hook sends is before_edit's file_path (DR-0038.D1, DR-0059.D1):
 #   sh tests/hooks.test.sh
 here=$(cd "$(dirname "$0")/.." && pwd)
 python3 - "$here/plugins/ergana/hooks/hooks.json" <<'PY'
-import json, sys
-allowed = {"session_id", "agent_type", "file_path", "state", "name", "background_tasks", "plugin_version"}
+import json, shlex, sys
+allowed = {"agent_type", "file_path", "state", "name", "background_tasks"}
+tools = {"before_edit", "session_state", "check_done"}
+# today's calls: (event, matcher) -> (tool, timeout, {field: literal, or a dotted path into the hook input})
+expected = {
+    ("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit"): ("before_edit", 30, {"agent_type": ".agent_type", "file_path": ".tool_input.file_path"}),
+    ("PreToolUse", "AskUserQuestion"): ("session_state", 10, {"state": "waiting"}),
+    ("Stop", None): ("check_done", 30, {"background_tasks": ".background_tasks"}),
+    ("PostToolUse", "AskUserQuestion"): ("session_state", 10, {"state": "working"}),
+    ("Notification", "permission_prompt"): ("session_state", 10, {"state": "waiting"}),
+    ("UserPromptSubmit", None): ("session_state", 10, {"state": "working", "name": ".session_title"}),
+    ("SessionEnd", "clear"): ("session_state", 10, {"state": "stopped"}),
+}
 bad = []
-n = 0
+found = {}
 for event, groups in json.load(open(sys.argv[1]))["hooks"].items():
     for g in groups:
         for h in g["hooks"]:
-            if h["type"] != "mcp_tool":
+            if h["type"] == "mcp_tool":
+                bad.append(f"{event}: mcp_tool hook {h.get('tool')}")
                 continue
-            n += 1
-            for k, v in h["input"].items():
-                if "${cwd}" in str(v) or k not in allowed:
-                    bad.append(f"{event}/{h['tool']}: {k}={v}")
-if n == 0:
-    bad.append("no mcp_tool hook found")
+            if "ergana-hook.py" not in h["command"]:
+                continue
+            argv = shlex.split(h["command"])
+            if "cwd" in h["command"]:
+                bad.append(f"{event}: cwd in {h['command']}")
+            tool, timeout, pairs = argv[3], argv[4], argv[5:]
+            if tool not in tools:
+                bad.append(f"{event}: unknown tool {tool}")
+            if str(h.get("timeout")) != timeout:
+                bad.append(f"{event}/{tool}: argv timeout {timeout} != hook timeout {h.get('timeout')}")
+            fields = dict(p.split("=", 1) for p in pairs)
+            for k in fields:
+                if k not in allowed:
+                    bad.append(f"{event}/{tool}: field {k} not allowed")
+            found[(event, g.get("matcher"))] = (tool, h.get("timeout"), fields)
+if found != expected:
+    bad.append(f"calls differ from today's:\n    found    {found}\n    expected {expected}")
 if bad:
     print("FAIL hooks:", *bad, sep="\n  ")
     sys.exit(1)
-print(f"ok   {n} mcp_tool hooks send no cwd")
+print(f"ok   {len(found)} Ergana calls are command hooks with today's tool, fields, values and timeout, no cwd")
 PY
 # skills/login/SKILL.md: no question before the browser, login runs with no --workspace (DR-0040.D1)
 skill="$here/plugins/ergana/skills/login/SKILL.md"
