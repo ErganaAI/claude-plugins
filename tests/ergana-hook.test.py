@@ -312,5 +312,12 @@ check("token-not-in-argv", p.stdout == "fine" and "SECRET-TOKEN-XYZ" not in "".j
 check("token-not-in-output", "SECRET-TOKEN-XYZ" not in p.stdout + p.stderr and p.stdout == "fine", (p.stdout, p.stderr))
 check("token-sent", last(srv)["headers"].get("Authorization") == "Bearer SECRET-TOKEN-XYZ")
 
+# H2: a test never reaches production: no ERGANA_ORIGIN, or one on app.ergana.ai, fails before the helper
+for o in ("", "https://app.ergana.ai", "https://App.Ergana.ai:443", "https://app.ergana.ai.", "http://evil.example"):
+    n = len(srv.calls)
+    p, _ = run(o, r, EDIT)
+    check("test-mode-never-production %r" % o, p.returncode == 1 and "never production" in p.stderr
+          and p.stdout == "" and len(srv.calls) == n, (p.returncode, p.stderr))
+
 shutil.rmtree(TMP, ignore_errors=True)
 sys.exit(1 if failed else 0)

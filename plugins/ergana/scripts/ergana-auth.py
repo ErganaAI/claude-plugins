@@ -12,7 +12,8 @@
                                                 (exit 3: two or more, 4: none, 1 with the slug alone: no token)
 
 Python 3.9, standard library only. The origin is https://app.ergana.ai; ERGANA_ORIGIN (and
-ERGANA_AUTH_KEYCHAIN, ERGANA_LOGIN_WAIT) are read only when ERGANA_AUTH_TEST=1. Every secret is filed under its origin's host and
+ERGANA_AUTH_KEYCHAIN, ERGANA_LOGIN_WAIT) are read only when ERGANA_AUTH_TEST=1, which never reaches production:
+without an ERGANA_ORIGIN, or with one on app.ergana.ai, every command that needs the origin fails. Every secret is filed under its origin's host and
 is renewed or revoked only at the origin filed with it. A secret never reaches stdout or stderr, except the
 access token that `header` prints; errors are one line with no response content.
 """
@@ -37,6 +38,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PROD_ORIGIN = "https://app.ergana.ai"
+PROD_HOST = "app.ergana.ai"
 SLUG_RE = re.compile(r"^[a-z0-9]{3,30}$")
 HOST_RE = re.compile(r"^[a-z0-9.-]+(:[0-9]{1,5})?$")
 REFRESH_MARGIN = 300  # renew an access token that expires within 5 minutes
@@ -73,6 +75,10 @@ def origin():
     # outside the tests the origin is PROD_ORIGIN; in them, http only for the loopback
     if not m or (m.group(1) == "http" and m.group(2) not in ("127.0.0.1", "localhost")):
         raise Fail(t("origine invalide", "invalid origin"))
+    # a test never reaches production: ERGANA_ORIGIN must name a test server
+    if test_mode() and m.group(2).lower().rstrip(".") == PROD_HOST:
+        raise Fail(t("mode test : jamais la production, ERGANA_ORIGIN doit nommer un serveur de test",
+                     "test mode: never production, ERGANA_ORIGIN must name a test server"))
     return o
 
 

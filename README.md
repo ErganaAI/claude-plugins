@@ -130,6 +130,13 @@ Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/in
 
 ## Tests
 
+No test reaches production (`app.ergana.ai`), from 0.19.9. `ERGANA_AUTH_TEST=1` is the one test switch, honoured
+by every script that calls Ergana: the origin is then `ERGANA_ORIGIN`, a test server, and with no `ERGANA_ORIGIN` or
+one on `app.ergana.ai`, `ergana-auth.py` and `ergana-hook.py` fail in one line before sending anything, the
+listener does not start, and the MCP headers helper sends `Authorization: Bearer ergana-not-connected` alone (no
+token, no repository header, never the shared sign-in). In CI, `app.ergana.ai` resolves to `127.0.0.1`, so any call
+to it fails the run. The suites use loopback fake servers or `https://ergana.test`, which never resolves.
+
 CI (`.github/workflows/ci.yml`) runs every `tests/*.test.py` and `tests/*.test.sh` on Ubuntu and macOS for each pull request and each push to main; its `test` check is required to merge into main.
 
 ```
@@ -142,3 +149,25 @@ sh tests/cleared.test.sh
 sh tests/ergana-tools.test.sh
 sh tests/inbox.test.sh
 ```
+
+## Testing the hooks by hand
+
+A live Claude Code session in a repository whose `.ergana` names a real workspace acts in that workspace: on
+27 Nov 2026 one such test, in a throwaway repository with the `ErganaAI/claude-plugins` origin and `workspace =
+ergana`, opened the change "Write \"one\" to note.txt" and its ticket (#40) in the production workspace. Never test
+that way. Test in a throwaway repository with no real origin, and start the session with the test switch:
+
+```
+ERGANA_AUTH_TEST=1 claude --plugin-dir /path/to/claude-plugins/plugins/ergana --strict-mcp-config
+```
+
+- With no `ERGANA_ORIGIN`, Ergana is off: each hook that calls Ergana prints one line (« test mode: never
+  production ») and sends nothing; the done gate and the rules before an edit do not run.
+- To see the hooks' calls, run a local fake server (as in `tests/ergana-hook.test.py`) and add
+  `ERGANA_ORIGIN=http://127.0.0.1:<port>`, with a token stored for it under a throwaway `HOME`
+  (`~/.config/ergana/127.0.0.1_<port>/<slug>`, as the tests do) and `ERGANA_AUTH_KEYCHAIN=0`.
+- `--strict-mcp-config` loads only the MCP servers given with `--mcp-config`, so not the plugin's, whose URL is
+  fixed at `app.ergana.ai`. Without it, that server only gets `Bearer ergana-not-connected` in the first case, and the fake server's token in
+  the second, and refuses every tool call.
+- Every copy of the plugin the session loads must be 0.19.9 or later, the installed one included
+  (`claude plugin update ergana@ergana`): an older one still calls production under the switch.

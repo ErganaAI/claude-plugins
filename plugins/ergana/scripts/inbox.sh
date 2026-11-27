@@ -10,7 +10,8 @@
 # key goes to curl in a 0600 header file (-H @file), never on its command line, and is never
 # printed. No jq: the hook input is matched as text.
 # The base URL is fixed (the MCP server's origin); ERGANA_ORIGIN overrides it only with
-# ERGANA_AUTH_TEST=1, as in ergana-auth.py. ERGANA_INBOX_PAUSE and ERGANA_INBOX_BACKOFF (seconds)
+# ERGANA_AUTH_TEST=1, as in ergana-auth.py, and a test never reaches production: with ERGANA_AUTH_TEST=1
+# and no ERGANA_ORIGIN, or one on app.ergana.ai, the listener exits at once. ERGANA_INBOX_PAUSE and ERGANA_INBOX_BACKOFF (seconds)
 # are for the tests.
 input=$(cat)
 session=$(printf '%s' "$input" | sed -n 's/.*[{,]"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]\{1,128\}\)".*/\1/p' | head -n 1)
@@ -19,7 +20,12 @@ dir=$CLAUDE_PLUGIN_DATA/inbox
 key=$(cat "$dir/$session.key" 2>/dev/null)
 printf '%s' "$key" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' || exit 0
 base=https://app.ergana.ai
-[ "${ERGANA_AUTH_TEST:-}" = 1 ] && [ -n "${ERGANA_ORIGIN:-}" ] && base=${ERGANA_ORIGIN%/}
+. "$(cd "$(dirname "$0")" && pwd)/ergana-repo.sh"
+if test_off_prod; then
+  echo "Ergana › test mode: never production, ERGANA_ORIGIN must name a test server" >&2
+  exit 0
+fi
+[ "${ERGANA_AUTH_TEST:-}" = 1 ] && base=${ERGANA_ORIGIN%/}
 pause=${ERGANA_INBOX_PAUSE:-2}
 backoff=${ERGANA_INBOX_BACKOFF:-5}
 cap=300
