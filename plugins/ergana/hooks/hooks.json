@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/scripts/ergana-hook.py session_state 10 state=waiting",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/scripts/ergana-hook.py session_state 10 state=waiting questions=.tool_input.questions",
             "timeout": 10
           }
         ]
