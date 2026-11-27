@@ -54,12 +54,17 @@ class Fail(Exception):
         self.code = code
 
 
-def fr():
-    return os.environ.get("LANG", "").startswith("fr")
+def load_texts():
+    """`say` from texts.py beside this script, loaded by its path: `python3 -I` keeps this folder
+    off sys.path, so it is never imported by name."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "texts.py")
+    scope = {"__name__": "ergana_texts"}
+    with open(path, encoding="utf-8") as f:
+        exec(compile(f.read(), path, "exec"), scope)  # no __pycache__ in the plugin's folder
+    return scope["say"]
 
 
-def t(french, english):
-    return french if fr() else english
+say = load_texts()
 
 
 # ---- origin, host, paths
@@ -74,25 +79,23 @@ def origin():
     m = re.match(r"^(https?)://([A-Za-z0-9.-]+)(:[0-9]{1,5})?$", o)
     # outside the tests the origin is PROD_ORIGIN; in them, http only for the loopback
     if not m or (m.group(1) == "http" and m.group(2) not in ("127.0.0.1", "localhost")):
-        raise Fail(t("origine invalide", "invalid origin"))
+        raise Fail(say("auth.invalid_origin"))
     # a test never reaches production: ERGANA_ORIGIN must name a test server
     if test_mode() and m.group(2).lower().rstrip(".") == PROD_HOST:
-        raise Fail(t("mode test : jamais la production, ERGANA_ORIGIN doit nommer un serveur de test",
-                     "test mode: never production, ERGANA_ORIGIN must name a test server"))
+        raise Fail(say("auth.test_mode_never_production"))
     return o
 
 
 def host_of(o):
     host = urllib.parse.urlparse(o).netloc.lower()
     if not HOST_RE.match(host):
-        raise Fail(t("hôte invalide", "invalid host"))
+        raise Fail(say("auth.invalid_host"))
     return host
 
 
 def check_slug(slug):
     if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
-        raise Fail(t("espace invalide (3 à 30 lettres minuscules ou chiffres)",
-                     "invalid workspace (3 to 30 lowercase letters or digits)"), 2)
+        raise Fail(say("auth.invalid_workspace_3_to"), 2)
     return slug
 
 
@@ -140,7 +143,7 @@ def security(args, stdin=None):
     try:
         return subprocess.run([exe] + args, input=stdin, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        raise Fail(t("Trousseau inaccessible", "Keychain unavailable"))
+        raise Fail(say("auth.keychain_unavailable"))
 
 
 def secret_file(slug, host):
@@ -181,7 +184,7 @@ def store_secret(slug, secret, host=None):
         b64 = base64.b64encode(json.dumps(secret).encode("utf-8")).decode("ascii")
         security(["-i"], "add-generic-password -U -s ergana -a %s@%s -w %s\n" % (slug, host, b64))
         if load_secret(slug, host) != secret:
-            raise Fail(t("jeton non rangé dans le Trousseau", "token not stored in the Keychain"))
+            raise Fail(say("auth.token_not_stored_in"))
     else:
         host_dir(host)
         write_private(secret_file(slug, host), json.dumps(secret))
@@ -293,14 +296,14 @@ def read_slug(path):
         with open(path) as f:
             lines = f.read().split("\n")
     except OSError:
-        raise Fail(t("fichier .ergana illisible", "unreadable .ergana file"), 2)
+        raise Fail(say("auth.unreadable_ergana_file"), 2)
     for line in lines:
         if line.lstrip().startswith("#"):
             continue
         m = re.match(r"^\s*workspace\s*=(.*)$", line)
         if m:
             return check_slug(m.group(1).strip())
-    raise Fail(t("fichier .ergana sans ligne workspace", "no workspace line in the .ergana file"), 2)
+    raise Fail(say("auth.no_workspace_line_in"), 2)
 
 
 def slug_arg(args):
@@ -359,7 +362,7 @@ def post_form(o, path, fields, timeout, deadline=None):
         th.start()
         th.join(max(0.0, deadline - time.monotonic()))
         if not box:
-            raise Fail(t("serveur injoignable", "server unreachable"))
+            raise Fail(say("auth.server_unreachable"))
         if isinstance(box[0], Fail):
             raise box[0]
         return box[0]
@@ -370,9 +373,9 @@ def post_form(o, path, fields, timeout, deadline=None):
         with opener.open(req, timeout=timeout) as r:
             status, body = r.status, r.read(65536)
     except urllib.error.HTTPError as e:
-        raise Fail(t("refusé par le serveur (HTTP %d)", "refused by the server (HTTP %d)") % e.code)
+        raise Fail(say("auth.refused_by_the_server") % e.code)
     except (OSError, http.client.HTTPException):
-        raise Fail(t("serveur injoignable", "server unreachable"))
+        raise Fail(say("auth.server_unreachable"))
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError:
@@ -384,10 +387,10 @@ def token_request(o, fields, timeout, deadline=None):
     _, data = post_form(o, "/oauth/token", fields, timeout, deadline)
     if (not data or not isinstance(data.get("access_token"), str) or not data["access_token"]
             or not isinstance(data.get("refresh_token"), str) or not data["refresh_token"]):
-        raise Fail(t("réponse du serveur invalide", "invalid server response"))
+        raise Fail(say("auth.invalid_server_response"))
     exp = data.get("expires_in", 3600)
     if not isinstance(exp, (int, float)) or isinstance(exp, bool) or exp <= 0:
-        raise Fail(t("réponse du serveur invalide", "invalid server response"))
+        raise Fail(say("auth.invalid_server_response"))
     return data, {"access": data["access_token"], "refresh": data["refresh_token"],
                   "expires_at": int(time.time() + exp), "origin": o}
 
@@ -458,29 +461,26 @@ def callback_page(workspace, reason, nonce):
     """The HTML answer to /callback: connected to `workspace`, or nothing connected for `reason` (plain text)."""
     esc = html.escape
     now = 3 if workspace else 2
-    names = (t("Connexion", "Sign in"), t("Autorisation", "Allow"), t("Retour à Claude Code", "Back to Claude Code"))
+    names = (say("auth.sign_in"), say("auth.allow"), say("auth.back_to_claude_code"))
     steps = "".join('<li%s><b>%s</b>%s</li>' % (
         ' class="now" aria-current="step"' if i == now else ' class="done"' if i < now else "",
         "✓" if i < now else i, n) for i, n in enumerate(names, 1))
     if workspace:
-        title = t("Claude Code est connecté", "Claude Code is connected")
+        title = say("auth.claude_code_is_connected")
         card = '<div class="icon">%s</div><div><h1>%s</h1><p>%s</p></div>' % (
-            ICON_CHECK, title, t("Ce dépôt utilise désormais <strong>%s</strong>. Revenir au terminal ; cet onglet "
-                                 "peut être fermé.", "This repository now uses <strong>%s</strong>. Go back to your "
-                                 "terminal; you can close this tab.") % esc(workspace))
+            ICON_CHECK, title, say("auth.this_repository_now_uses") % esc(workspace))
         script = ""
     else:
-        title = t("Rien n'a été connecté", "Nothing was connected")
+        title = say("auth.nothing_was_connected")
         card = ('<div class="icon attention">%s</div><div><h1>%s</h1><p>%s %s</p></div><div class="copy">'
                 '<code>/ergana:login</code><button type="button" data-done="%s">%s<span aria-live="polite">%s</span></button></div>') % (
-            ICON_ALERT, title, esc(reason), t("Pour réessayer, lancer ceci dans le dépôt :",
-                                              "To try again, run this in the repository:"),
-            t("Copié", "Copied"), ICON_COPY, t("Copier", "Copy"))
+            ICON_ALERT, title, esc(reason), say("auth.to_try_again_run"),
+            say("auth.copied"), ICON_COPY, say("auth.copy"))
         script = '<script nonce="%s">%s</script>' % (nonce, COPY_JS)
     return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-'
             'width, initial-scale=1"><title>%s · Ergana</title><style nonce="%s">%s</style></head><body><main><div '
             'class="column">%s<ol class="steps" aria-label="%s">%s</ol><section class="card">%s</section></div></main>'
-            '%s</body></html>') % (t("fr", "en"), title, nonce, PAGE_CSS, MARK, t("Étapes", "Steps"), steps, card,
+            '%s</body></html>') % (say("auth.html_lang"), title, nonce, PAGE_CSS, MARK, say("auth.steps"), steps, card,
                                    script)
 
 
@@ -514,16 +514,16 @@ class Callback(BaseHTTPRequestHandler):
             except Exception as e:
                 srv.result = {"error": e}
         else:
-            srv.result = {"error": Fail(t("connexion refusée dans le navigateur", "sign-in refused in the browser"))}
+            srv.result = {"error": Fail(say("auth.sign_in_refused_in"))}
         ws = srv.result.get("workspace")
         if ws:
             reason = None
         elif q.get("code"):
             e = srv.result["error"]
-            reason = str(e).replace("\n", " ") if isinstance(e, Fail) else t("erreur interne", "internal error")
+            reason = str(e).replace("\n", " ") if isinstance(e, Fail) else say("auth.internal_error")
             reason = reason[:1].upper() + reason[1:] + ("" if reason.endswith(".") else ".")
         else:
-            reason = t("L'accès a été refusé dans le navigateur.", "Access was denied in the browser.")
+            reason = say("auth.access_was_denied_in")
         nonce = secrets.token_urlsafe(16)
         body = callback_page(ws, reason, nonce).encode("utf-8")
         self.send_response(200 if ws else 400)
@@ -582,13 +582,11 @@ def browser_login(o, slug, fslug=None):
             got = data.get("ergana_workspace")
             refusal = None
             if not isinstance(got, str) or not SLUG_RE.fullmatch(got):
-                refusal = t("réponse du serveur invalide", "invalid server response")
+                refusal = say("auth.invalid_server_response")
             elif slug and got != slug:
-                refusal = (t("Ce dépôt est lié à l'espace %s ; le compte connecté appartient à l'espace %s.",
-                             "This repository is linked to the %s workspace; the account signed in belongs to the %s workspace.")
+                refusal = (say("auth.this_repository_is_linked_2")
                            if fslug else
-                           t("Connexion demandée à l'espace %s ; le compte connecté appartient à l'espace %s.",
-                             "Sign-in asked for the %s workspace; the account signed in belongs to the %s workspace.")
+                           say("auth.sign_in_asked_for")
                            ) % (slug, got)
                 delete_secret(got, host)  # the server superseded it
                 index_remove(got, host)
@@ -597,7 +595,7 @@ def browser_login(o, slug, fslug=None):
                     post_form(o, "/oauth/revoke", {"token": secret["refresh"], "token_type_hint": "refresh_token",
                                                    "client_id": client_id(o)}, 5)
                 except Fail as e:
-                    refusal += "\n" + t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % e
+                    refusal += "\n" + say("auth.revocation_not_confirmed_s") % e
                 raise Fail(refusal)
             lock = secret_file(got, host) + ".lock"
             host_dir(host)
@@ -616,8 +614,7 @@ def browser_login(o, slug, fslug=None):
         "response_type": "code", "client_id": client_id(o), "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": srv.state,
         "resource": o + "/mcp", **({"workspace": slug} if slug else {})})
-    print(t("Ouverture du navigateur pour la connexion à Ergana. Sans ouverture, ouvrir ce lien : %s",
-            "Opening the browser to sign in to Ergana. If nothing opens, open this link: %s") % url)
+    print(say("auth.opening_the_browser_to") % url)
     sys.stdout.flush()
     open_browser(url)
     wait = float(os.environ.get("ERGANA_LOGIN_WAIT") or LOGIN_WAIT) if test_mode() else LOGIN_WAIT
@@ -626,7 +623,7 @@ def browser_login(o, slug, fslug=None):
         while srv.result is None:
             left = deadline - time.monotonic()
             if left <= 0:
-                raise Fail(t("connexion non terminée après 5 minutes", "sign-in not finished after 5 minutes"))
+                raise Fail(say("auth.sign_in_not_finished"))
             srv.timeout = min(left, 1.0)
             srv.handle_request()
     finally:
@@ -642,8 +639,7 @@ def login_target(args):
     path, _ = find_ergana(os.getcwd())
     fslug = read_slug(path) if path else None
     if arg and fslug and arg != fslug:
-        raise Fail(t("ce dépôt est lié à l'espace %s par son fichier .ergana : connexion à %s refusée",
-                     "this repository is linked to the %s workspace by its .ergana file: sign-in to %s refused")
+        raise Fail(say("auth.this_repository_is_linked")
                    % (fslug, arg))
     return arg or fslug, path, fslug
 
@@ -668,7 +664,7 @@ def cmd_connected(args):
     if not already_connected(slug, o):
         return 3
     link(slug, host_of(o), path)
-    print(t("L'espace %s est déjà connecté.", "The %s workspace is already connected.") % slug)
+    print(say("auth.the_s_workspace_is") % slug)
     return 0
 
 
@@ -678,12 +674,11 @@ def cmd_login(args):
     slug, path, fslug = login_target(args)
     o = origin()
     slug = browser_login(o, slug, fslug)
-    print(t("Connecté à l'espace %s.", "Signed in to the %s workspace.") % slug)
+    print(say("auth.signed_in_to_the") % slug)
     link(slug, host_of(o), path)
     # The server lets ergana-not-connected through the handshake and refuses only tool calls, on which Claude Code
     # runs the headers helper again: the session's next call carries the new token (#31).
-    print(t("Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.",
-            "Ergana's tools work in this session from their next call. If one still says the server is not connected: in /mcp, choose `plugin:ergana:ergana`, then `Reconnect`."))
+    print(say("auth.ergana_s_tools_work"))
     return 0
 
 
@@ -728,7 +723,7 @@ def acquire(lock, deadline):
                 pass
             continue
         if time.monotonic() >= deadline:
-            raise Fail(t("renouvellement déjà en cours", "renewal already in progress"))
+            raise Fail(say("auth.renewal_already_in_progress"))
         time.sleep(0.05)
 
 
@@ -790,7 +785,7 @@ def header_token(slug, host, o, deadline):
     """The workspace's access token, renewed when it expires within REFRESH_MARGIN."""
     sec = load_secret(slug, host)
     if not usable(sec, o):
-        raise Fail(t("espace non connecté", "workspace not connected"))
+        raise Fail(say("auth.workspace_not_connected"))
     if sec["expires_at"] - time.time() > REFRESH_MARGIN:
         return sec["access"]
     lock = secret_file(slug, host) + ".lock"
@@ -799,10 +794,10 @@ def header_token(slug, host, o, deadline):
     try:
         sec = load_secret(slug, host)  # another session may have renewed it while this one waited
         if not usable(sec, o):
-            raise Fail(t("espace non connecté", "workspace not connected"))
+            raise Fail(say("auth.workspace_not_connected"))
         if sec["expires_at"] - time.time() <= REFRESH_MARGIN:
             if deadline - time.monotonic() < 2.0:  # the POST and the store both need room
-                raise Fail(t("délai dépassé", "out of time"))
+                raise Fail(say("auth.out_of_time"))
             # From the POST until the new pair is stored (read-back included) nothing may kill this process:
             # the server has rotated the refresh token, and a pair lost here locks the person out.
             old = {s: signal.signal(s, signal.SIG_IGN)
@@ -834,7 +829,7 @@ def cmd_logout(args):
     fslug, _, _ = repo_slug()
     slug = arg or fslug
     if not slug:
-        raise Fail(t("espace à indiquer : logout --workspace <espace>", "workspace needed: logout --workspace <slug>"), 2)
+        raise Fail(say("auth.workspace_needed_logout_workspace"), 2)
     o = origin()
     host = host_of(o)
     sec = load_secret(slug, host)
@@ -848,12 +843,12 @@ def cmd_logout(args):
             except Fail as e:
                 warn = str(e)
         else:
-            warn = t("origine du jeton différente", "token origin differs")
+            warn = say("auth.token_origin_differs")
         delete_secret(slug, host)
     index_remove(slug, host)
-    print(t("Déconnecté de l'espace %s.", "Signed out of the %s workspace.") % slug)
+    print(say("auth.signed_out_of_the") % slug)
     if warn:
-        print(t("Révocation non confirmée : %s", "Revocation not confirmed: %s") % warn)
+        print(say("auth.revocation_not_confirmed_s") % warn)
     return 0
 
 
@@ -866,28 +861,26 @@ def cmd_status(args):
     only = host_slugs(host) if not slug else []
     if slug or len(only) == 1:
         if slug:
-            source = t("fichier .ergana committé", "committed .ergana file") if tracked else \
-                t("fichier .ergana local", "local .ergana file")
+            source = say("auth.committed_ergana_file") if tracked else \
+                say("auth.local_ergana_file")
         else:  # DR-0057.D1
             slug = only[0]
-            source = t("seul espace connecté sur cette machine", "only workspace signed in on this machine")
-        print(t("Espace du dépôt : %s (%s)", "Repository workspace: %s (%s)") % (slug, source))
+            source = say("auth.only_workspace_signed_in")
+        print(say("auth.repository_workspace_s_s") % (slug, source))
         sec = load_secret(slug, host)
         if sec and sec["origin"] == o:
             until = time.strftime("%Y-%m-%d %H:%M", time.localtime(sec["expires_at"]))
             if sec["expires_at"] > time.time():
-                print(t("Connecté, jeton valable jusqu'à %s (renouvelé seul ensuite).",
-                        "Connected, token valid until %s (renewed on its own after that).") % until)
+                print(say("auth.connected_token_valid_until") % until)
             else:
-                print(t("Connecté, jeton échu depuis %s (renouvelé à la prochaine connexion).",
-                        "Connected, token expired at %s (renewed at the next connection).") % until)
+                print(say("auth.connected_token_expired_at") % until)
         else:
-            print(t("Non connecté : /ergana:login", "Not connected: /ergana:login"))
+            print(say("auth.not_connected_ergana_login"))
     else:
-        print(t("Aucun fichier .ergana dans ce dépôt.", "No .ergana file in this repository."))
+        print(say("auth.no_ergana_file_in"))
     others = [l.split(" ", 1)[1] for l in index_lines() if l.split(" ", 1)[0] == host]
     if others:
-        print(t("Espaces connectés sur cette machine : %s", "Workspaces connected on this machine: %s")
+        print(say("auth.workspaces_connected_on_this")
               % ", ".join(others))
     return 0
 
@@ -897,11 +890,11 @@ def cmd_later(args):
         raise Fail("usage: ergana-auth.py later", 2)
     rc, p = git(["rev-parse", "--path-format=absolute", "--git-path", "info/ergana-later"], os.getcwd())
     if rc != 0 or not p:
-        raise Fail(t("pas dans un dépôt git", "not in a git repository"))
+        raise Fail(say("auth.not_in_a_git"))
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w") as f:
         f.write("later\n")
-    print(t("Connexion non reproposée dans ce dépôt.", "Sign-in not offered again in this repository."))
+    print(say("auth.sign_in_not_offered"))
     return 0
 
 
@@ -919,7 +912,7 @@ def main(argv):
     except KeyboardInterrupt:
         return 130
     except Exception as e:  # no trace: it could carry a secret
-        sys.stderr.write("ergana: %s (%s)\n" % (t("erreur interne", "internal error"), type(e).__name__))
+        sys.stderr.write("ergana: %s (%s)\n" % (say("auth.internal_error"), type(e).__name__))
         return 1
 
 
