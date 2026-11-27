@@ -76,4 +76,25 @@ mkdir "$tmp/plain"
 if "$fp" "$tmp/plain" >/dev/null; then echo "FAIL outside git: printed"; failed=1; else echo "ok   outside git"; fi
 git init -q "$tmp/empty"
 if "$fp" "$tmp/empty" >/dev/null; then echo "FAIL no commit: printed"; failed=1; else echo "ok   no commit"; fi
+
+# --empty: exit 0 only when the checkout has nothing to check (no diff from the base, no untracked
+# file git does not ignore), 1 otherwise, outside git and before the first commit included.
+# empty|changed <name> <folder>
+empty() { if "$fp" --empty "$2"; then echo "ok   $1"; else echo "FAIL $1: changed"; failed=1; fi; }
+changed() { if "$fp" --empty "$2"; then echo "FAIL $1: empty"; failed=1; else echo "ok   $1"; fi; }
+git -C "$clone" reset -q --hard origin/HEAD
+empty "--empty: at the base" "$clone"
+mkdir -p "$clone/build" && printf 'x' >"$clone/build/out.bin"
+empty "--empty: an ignored file" "$clone"
+printf 'print(5)\n' >"$clone/app.py"
+changed "--empty: edited" "$clone"
+git -C "$clone" commit -qam five
+changed "--empty: committed on the branch" "$clone"
+git -C "$clone" reset -q --hard origin/HEAD
+printf 'x\n' >"$clone/notes.md"
+mkdir -p "$clone/sub"
+changed "--empty: untracked, from a subfolder" "$clone/sub"
+rm "$clone/notes.md"
+changed "--empty: outside git" "$tmp/plain"
+changed "--empty: no commit" "$tmp/empty"
 exit $failed
