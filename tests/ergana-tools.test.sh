@@ -66,6 +66,15 @@ hasnt relay-created-quiet "$(cat "$tmp/err")" "$made"
 out=$(step report_step '{"session_id":"x","task":"t"}')
 expect relay-kept "$(cat "$tmp/data/inbox/s1.key")" "$made"
 has relay-kept-in-call "$out" '"relay_key":"'"$made"'"'
+# Several report_step at once with no key file: the first writer wins, and every call carries the key the file
+# keeps (else the server could store a key the listener does not hold).
+rm -f "$tmp/data/inbox/s1.key"
+for i in 1 2 3 4 5 6 7 8; do step report_step '{"session_id":"x","task":"t"}' >"$tmp/race.$i" 2>/dev/null & done
+wait
+kept=$(cat "$tmp/data/inbox/s1.key" 2>/dev/null)
+race=ok
+for i in 1 2 3 4 5 6 7 8; do case $(cat "$tmp/race.$i") in *'"relay_key":"'"$kept"'"'*) ;; *) race=bad ;; esac; done
+expect relay-race-one-key "$race" ok
 # An agent's call never carries the working folder (cwd): stripped with or without session_id.
 # raw <tool> <tool_input>
 raw() {

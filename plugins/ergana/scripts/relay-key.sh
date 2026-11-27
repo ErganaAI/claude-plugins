@@ -18,7 +18,15 @@ relay_key() {
     key=$(head -c 32 /dev/urandom | base64 | LC_ALL=C tr '+/' '-_' | LC_ALL=C tr -d '=\n') || exit 1
     printf '%s' "$key" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' || exit 1
     tmp=$file.$$
-    printf '%s\n' "$key" >"$tmp" && mv -f "$tmp" "$file" || { rm -f "$tmp"; exit 1; }
+    printf '%s\n' "$key" >"$tmp" || { rm -f "$tmp"; exit 1; }
+    # A missing key: ln fails when another hook made it first, whose key is kept (as is one that became valid
+    # meanwhile). Only a malformed one is replaced.
+    if [ -e "$file" ] && ! LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' "$file"; then
+      mv -f "$tmp" "$file"
+    else
+      ln "$tmp" "$file" 2>/dev/null
+      rm -f "$tmp"
+    fi
   ) 2>/dev/null
   return 0
 }
