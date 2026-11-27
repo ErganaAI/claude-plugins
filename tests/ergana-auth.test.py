@@ -340,6 +340,7 @@ class LoginTest(Base):
         self.assertEqual(self.get()["access"], "ACCESS-1")
         self.assertEqual(r.stdout.splitlines()[-1], "Ergana's tools work in this session from their next call. If one still says the server is not connected: in /mcp, choose `plugin:ergana:ergana`, then `Reconnect`.")
         self.assert_clean(r)
+        self.mod.delete_secret("acme")
         r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
         self.assertEqual(r.stdout.splitlines()[-1], "Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.")
 
@@ -523,6 +524,41 @@ class LoginTest(Base):
         with open(os.path.join(repo, ".ergana")) as f:
             self.assertEqual(f.read().strip(), "workspace = acme")
         self.assertIn("/.ergana", self.exclude(repo).splitlines())
+
+    def test_9_connected_prints_only_the_connected_line(self):
+        # I8: /ergana:login checks first; a connected workspace prints one line, no browser, no network.
+        repo = self.repo()
+        self.put()
+        r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "L'espace acme est déjà connecté.\n")
+        self.assertFalse(os.path.exists(self.open_log))
+        self.assertEqual(self.server.requests, [])
+        with open(os.path.join(repo, ".ergana")) as f:
+            self.assertEqual(f.read().strip(), "workspace = acme")
+        r = self.run_auth(["login"], cwd=repo, env={"LANG": "en_US.UTF-8"})
+        self.assertEqual(r.stdout, "The acme workspace is already connected.\n")
+
+    def test_9_connected_exits_3_silently_when_not_connected(self):
+        repo = self.repo()
+        for args in (["connected"], ["connected", "--workspace", "acme"]):
+            r = self.run_auth(args, cwd=repo)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (3, "", ""))
+        self.put(expires_in=30)  # about to expire: login renews it at the browser
+        r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo)
+        self.assertEqual(r.returncode, 3)
+        self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
+        self.assertFalse(os.path.exists(self.open_log))
+        self.assertEqual(self.server.requests, [])
+
+    def test_9_connected_refuses_a_contrary_argument(self):
+        repo = self.repo()
+        with open(os.path.join(repo, ".ergana"), "w") as f:
+            f.write("workspace = other\n")
+        self.put()
+        r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo)
+        self.assertNotIn(r.returncode, (0, 3))
+        self.assertIn("other", r.stderr)
 
     def test_10_bad_slug_refused_before_any_file(self):
         repo = self.repo()

@@ -31,3 +31,11 @@ if grep -q AskUserQuestion "$skill" || ! grep -qF 'ergana-auth.py" login' "$skil
   exit 1
 fi
 echo "ok   login skill asks nothing and runs login at once"
+# I8: the connection is checked before the browser line, so a connected workspace hears only « déjà connecté »
+c=$(grep -nF 'ergana-auth.py" connected' "$skill" | head -n 1 | cut -d: -f1)
+b=$(grep -n 'browser opens' "$skill" | head -n 1 | cut -d: -f1)
+if [ -z "$c" ] || [ -z "$b" ] || [ "$c" -ge "$b" ]; then
+  echo "FAIL login skill: the connected check does not come before the browser sentence"
+  exit 1
+fi
+echo "ok   login skill checks the connection before the browser sentence"
