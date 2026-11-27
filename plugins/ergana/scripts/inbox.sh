@@ -1,6 +1,8 @@
 #!/bin/sh
 # Stop (async, asyncRewake): the session's listener. While the session is idle, it holds Ergana's
-# GET /v1/relay/listen with the session's relay key (inbox/<session>.key, made by relay-key.sh).
+# GET /v1/relay/listen with the session's relay key (inbox/<session>.key, made by relay-key.sh at
+# session start or on the session's next Ergana tool call, and registered by report_step or
+# get_messages). Without a key it exits 0 at once: it cannot register one itself.
 # When another agent writes to the session's person, Ergana answers 200 with a fixed signal: it is
 # printed on stderr and the script exits 2, which wakes Claude with it, so it calls get_messages.
 # Any other end exits 0, which wakes nothing.
