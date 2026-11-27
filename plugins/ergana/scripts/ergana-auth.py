@@ -303,7 +303,7 @@ def slug_arg(args):
         return None
     if len(args) == 2 and args[0] == "--workspace":
         return check_slug(args[1])
-    raise Fail("usage: ergana-auth.py <login|logout> [--workspace <slug>]", 2)
+    raise Fail("usage: ergana-auth.py <login|connected|logout> [--workspace <slug>]", 2)
 
 
 def write_ergana(start, slug):
@@ -630,27 +630,50 @@ def browser_login(o, slug, fslug=None):
     return srv.result["workspace"]
 
 
-def cmd_login(args):
+def login_target(args):
+    """The workspace to sign in to (argument, else .ergana, else None), the .ergana path, and its slug."""
     arg = slug_arg(args)
-    start = os.getcwd()
-    path, _ = find_ergana(start)
+    path, _ = find_ergana(os.getcwd())
     fslug = read_slug(path) if path else None
     if arg and fslug and arg != fslug:
         raise Fail(t("ce dépôt est lié à l'espace %s par son fichier .ergana : connexion à %s refusée",
                      "this repository is linked to the %s workspace by its .ergana file: sign-in to %s refused")
                    % (fslug, arg))
-    slug = arg or fslug
-    o = origin()
-    host = host_of(o)
-    have = load_secret(slug, host) if slug else None
-    if have and have["origin"] == o and have["expires_at"] - time.time() > 60:
-        print(t("L'espace %s est déjà connecté.", "The %s workspace is already connected.") % slug)
-    else:
-        slug = browser_login(o, slug, fslug)
-        print(t("Connecté à l'espace %s.", "Signed in to the %s workspace.") % slug)
+    return arg or fslug, path, fslug
+
+
+def link(slug, host, path):
+    """The workspace in this machine's index, and in a new .ergana when the repository has none."""
     index_add(slug, host)
     if not path:
-        write_ergana(start, slug)
+        write_ergana(os.getcwd(), slug)
+
+
+def already_connected(slug, o):
+    have = load_secret(slug, host_of(o)) if slug else None
+    return bool(have) and have["origin"] == o and have["expires_at"] - time.time() > 60
+
+
+def cmd_connected(args):
+    """/ergana:login's first step (I8): with the workspace already connected, link it and print the one line
+    that says so; else exit 3 with nothing printed, and login opens the browser. No network."""
+    slug, path, _ = login_target(args)
+    o = origin()
+    if not already_connected(slug, o):
+        return 3
+    link(slug, host_of(o), path)
+    print(t("L'espace %s est déjà connecté.", "The %s workspace is already connected.") % slug)
+    return 0
+
+
+def cmd_login(args):
+    if cmd_connected(args) == 0:
+        return 0
+    slug, path, fslug = login_target(args)
+    o = origin()
+    slug = browser_login(o, slug, fslug)
+    print(t("Connecté à l'espace %s.", "Signed in to the %s workspace.") % slug)
+    link(slug, host_of(o), path)
     # The server lets ergana-not-connected through the handshake and refuses only tool calls, on which Claude Code
     # runs the headers helper again: the session's next call carries the new token (#31).
     print(t("Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.",
@@ -876,7 +899,7 @@ def cmd_later(args):
     return 0
 
 
-COMMANDS = {"login": cmd_login, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header, "only": cmd_only}
+COMMANDS = {"login": cmd_login, "connected": cmd_connected, "status": cmd_status, "logout": cmd_logout, "later": cmd_later, "header": cmd_header, "only": cmd_only}
 
 
 def main(argv):
