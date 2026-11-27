@@ -51,8 +51,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def t(french, english):
-    return french if os.environ.get("LANG", "").startswith("fr") else english
+def load_texts():
+    """`say` from texts.py beside this script, loaded by its path: `python3 -I` keeps this folder
+    off sys.path, so it is never imported by name."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "texts.py")
+    scope = {"__name__": "ergana_texts"}
+    with open(path, encoding="utf-8") as f:
+        exec(compile(f.read(), path, "exec"), scope)  # no __pycache__ in the plugin's folder
+    return scope["say"]
+
+
+say = load_texts()
 
 
 def fail(line):
@@ -70,8 +79,7 @@ def origin():
     m = re.match(r"^(https?)://([A-Za-z0-9.-]+)(:[0-9]{1,5})?$", o)
     if not m or (m.group(1) == "http" and m.group(2) not in ("127.0.0.1", "localhost")) \
             or m.group(2).lower().rstrip(".") == "app.ergana.ai":
-        fail(t("Ergana › mode test : jamais la production, ERGANA_ORIGIN doit nommer un serveur de test",
-               "Ergana › test mode: never production, ERGANA_ORIGIN must name a test server"))
+        fail(say("hook.test_mode_never_production"))
     return o
 
 
@@ -140,7 +148,7 @@ def main():
 
     left = deadline - time.monotonic()
     if left < MIN_LEFT:
-        fail(t("Ergana › serveur trop lent", "Ergana › server too slow"))
+        fail(say("hook.server_too_slow"))
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": tool, "arguments": arguments}}).encode()
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -155,23 +163,23 @@ def main():
         except urllib.error.HTTPError as e:
             status, raw = e.code, e.read(65536)
     except Slow:
-        fail(t("Ergana › serveur trop lent", "Ergana › server too slow"))
+        fail(say("hook.server_too_slow"))
     except socket.timeout:
-        fail(t("Ergana › serveur trop lent", "Ergana › server too slow"))
+        fail(say("hook.server_too_slow"))
     except urllib.error.URLError as e:
         if isinstance(e.reason, socket.timeout):
-            fail(t("Ergana › serveur trop lent", "Ergana › server too slow"))
-        fail(t("Ergana › serveur injoignable", "Ergana › server unreachable"))
+            fail(say("hook.server_too_slow"))
+        fail(say("hook.server_unreachable"))
     except OSError:
-        fail(t("Ergana › serveur injoignable", "Ergana › server unreachable"))
+        fail(say("hook.server_unreachable"))
     except http.client.HTTPException:
-        fail(t("Ergana › réponse illisible", "Ergana › unreadable answer"))
+        fail(say("hook.unreadable_answer"))
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
 
-    unreadable = t("Ergana › réponse illisible", "Ergana › unreadable answer")
+    unreadable = say("hook.unreadable_answer")
     if 300 <= status < 400:
-        fail(t("Ergana › réponse redirigée, requête non suivie", "Ergana › redirected, request not followed"))
+        fail(say("hook.redirected_request_not_followed"))
     if len(raw) > MAX_ANSWER:
         fail(unreadable)
     try:
@@ -183,7 +191,7 @@ def main():
         if isinstance(desc, str) and desc.strip():
             fail(desc)
         if status == 401:
-            fail(t("Ergana › connexion refusée : /ergana:login", "Ergana › sign-in refused: /ergana:login"))
+            fail(say("hook.sign_in_refused_ergana"))
         fail("Ergana › HTTP %d" % status)
     res = data.get("result") if isinstance(data, dict) else None
     err = data.get("error") if isinstance(data, dict) else None
