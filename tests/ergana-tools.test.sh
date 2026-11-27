@@ -39,8 +39,8 @@ git -C "$repo" remote add origin https://example.com/r.git
 has origin-true "$(call check_done "")" '"origin":true'
 expect check-done-writes-sent "$(cat "$tmp/data/sent/s1.check_done")" "$("$fp" "$repo")"
 
-# report_step carries the session's relay key from inbox/s1.key, and only report_step does; the agent's own
-# relay_key is dropped; a malformed key file is replaced by a good one.
+# report_step and get_messages carry the session's relay key from inbox/s1.key, and only they do; the agent's
+# own relay_key is dropped; a malformed key file is replaced by a good one.
 KEY=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ
 mkdir -p "$tmp/data/inbox"
 step() { printf '{"session_id":"s1","cwd":"%s","tool_name":"mcp__plugin_ergana_ergana__%s","tool_input":%s}' "$repo" "$1" "$2" | sh "$script"; }
@@ -49,7 +49,11 @@ printf '%s\n' "$KEY" >"$tmp/data/inbox/s1.key"
 has relay-added "$(step report_step '{"session_id":"x","task":"t"}')" '{"session_id":"s1","relay_key":"'"$KEY"'","task":"t"}'
 has relay-agent-key-replaced "$(step report_step '{"session_id":"x","relay_key":"evil","task":"t"}')" '{"session_id":"s1","relay_key":"'"$KEY"'","task":"t"}'
 hasnt relay-agent-key-gone "$(step report_step '{"session_id":"x","task":"t","relay_key":"evil"}')" evil
-hasnt relay-other-tool "$(step get_messages '{"session_id":"x"}')" relay_key
+has relay-get-messages "$(step get_messages '{"session_id":"x","wait_seconds":0}')" '{"session_id":"s1","relay_key":"'"$KEY"'","wait_seconds":0}'
+has relay-get-messages-agent-key-replaced "$(step get_messages '{"relay_key":"evil","session_id":"x"}')" '{"session_id":"s1","relay_key":"'"$KEY"'"}'
+hasnt relay-get-messages-agent-key-gone "$(step get_messages '{"session_id":"x","relay_key":"evil"}')" evil
+hasnt relay-other-tool "$(step list_sessions '{"session_id":"x"}')" relay_key
+hasnt relay-no-session-tool "$(step find_decisions '{"repository":"r","cwd":"/a"}')" relay_key
 hasnt relay-not-check-done "$(call check_done "")" relay_key
 printf 'short\n' >"$tmp/data/inbox/s1.key"
 has relay-malformed-replaced "$(step report_step '{"session_id":"x","task":"t"}')" '"relay_key":"'
@@ -66,6 +70,36 @@ hasnt relay-created-quiet "$(cat "$tmp/err")" "$made"
 out=$(step report_step '{"session_id":"x","task":"t"}')
 expect relay-kept "$(cat "$tmp/data/inbox/s1.key")" "$made"
 has relay-kept-in-call "$out" '"relay_key":"'"$made"'"'
+# Any Ergana tool call makes a missing key (a session that started before the key existed): a tool that
+# does not carry it, one with no session_id, then get_messages, which sends the key the file keeps.
+for t in list_sessions find_decisions; do
+  rm -f "$tmp/data/inbox/s1.key"
+  case $t in
+    list_sessions) out=$(step "$t" '{"session_id":"x","cwd":"/a"}' 2>"$tmp/err") ;;
+    *) out=$(step "$t" '{"repository":"r","cwd":"/a"}' 2>"$tmp/err") ;;
+  esac
+  made=$(cat "$tmp/data/inbox/s1.key" 2>/dev/null)
+  printf '%s' "$made" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' && echo "ok   relay-created-on-$t" || { echo "FAIL relay-created-on-$t: '$made'"; failed=1; }
+  case $(ls -l "$tmp/data/inbox/s1.key" 2>/dev/null) in -rw-------*) echo "ok   relay-created-on-$t-0600" ;; *) echo "FAIL relay-created-on-$t-0600"; failed=1 ;; esac
+  hasnt relay-created-on-$t-not-sent "$out" "$made"
+  hasnt relay-created-on-$t-quiet "$(cat "$tmp/err")" "$made"
+done
+rm -f "$tmp/data/inbox/s1.key"
+out=$(step get_messages '{"session_id":"x"}')
+made=$(cat "$tmp/data/inbox/s1.key" 2>/dev/null)
+printf '%s' "$made" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$' && echo "ok   relay-created-on-get-messages" || { echo "FAIL relay-created-on-get-messages: '$made'"; failed=1; }
+has relay-created-get-messages-in-call "$out" '{"session_id":"s1","relay_key":"'"$made"'"}'
+# A malformed key file that cannot be replaced (the inbox folder read-only) adds no key, and the call still goes.
+if [ "$(id -u)" != 0 ]; then
+  printf 'short\n' >"$tmp/data/inbox/s1.key"
+  chmod 500 "$tmp/data/inbox"
+  out=$(step get_messages '{"session_id":"x"}' 2>"$tmp/err")
+  expect relay-malformed-none "$out" '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"session_id":"s1"}}}'
+  expect relay-malformed-none-quiet "$(cat "$tmp/err")" ''
+  out=$(step report_step '{"session_id":"x","task":"t"}')
+  hasnt relay-malformed-none-report-step "$out" relay_key
+  chmod 700 "$tmp/data/inbox"
+fi
 # Several report_step at once with no key file: the first writer wins, and every call carries the key the file
 # keeps (else the server could store a key the listener does not hold).
 rm -f "$tmp/data/inbox/s1.key"
