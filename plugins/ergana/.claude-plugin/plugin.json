@@ -1,7 +1,7 @@
 {
   "name": "ergana",
   "displayName": "Ergana",
-  "version": "0.19.5",
+  "version": "0.19.6",
   "description": "Your company's decision catalogue in Claude Code: the rules before each edit, a rules check before the agent says it is done, /ergana:add-decision to write, try and record a decision, /ergana:review for an independent review before a change lands, /ergana:tracking to set where this repository's tickets go and which GitHub board shows them, and /ergana:login, /ergana:status and /ergana:logout for the sign-in of each workspace.",
   "author": {
     "name": "Ergana"

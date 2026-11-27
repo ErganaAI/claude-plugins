@@ -1,10 +1,13 @@
 #!/bin/sh
 # Stop: the done gate's local half (DR-0028.D1). The stop goes through when the git checkout holding
-# the session's folder is as it was at the session's start (start/<session>, session-context.sh) or
-# as the last check the server cleared left it (cleared/<session>, cleared.sh). Otherwise it is
-# refused once per fingerprint (DR-0033.D1): a continued stop passes only while the repository is
-# exactly the one refused (refused/<session>); the agent's check_done then gates. Outside a git
-# checkout, or in one with no commit, nothing is gated (DR-0032.D1), nor while the check agent runs.
+# the session's folder has nothing to check (fingerprint.sh --empty: a merge base with origin/HEAD,
+# no diff from it and no untracked file git does not ignore, so the rules check would judge nothing,
+# whatever the session's start was; DR-0028.D1 amended), is as it was at the session's start
+# (start/<session>, session-context.sh), or is as the last check the server cleared left it
+# (cleared/<session>, cleared.sh). Otherwise it is refused once per fingerprint (DR-0033.D1): a
+# continued stop passes only while the repository is exactly the one refused (refused/<session>); the
+# agent's check_done then gates. Outside a git checkout, or in one with no commit, nothing is gated
+# (DR-0032.D1), nor while the check agent runs.
 # A fingerprint that cannot be computed is "unknown": changed, fail closed. No jq: the hook input is
 # matched as text. The line follows LANG only (DR-0029.D1).
 input=$(cat)
@@ -16,7 +19,9 @@ cd "$cwd" 2>/dev/null || exit 0
 git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 git rev-parse --verify -q HEAD >/dev/null 2>&1 || exit 0
 
-sum=$("$(cd "$(dirname "$0")" && pwd)/fingerprint.sh" .) &&
+here=$(cd "$(dirname "$0")" && pwd)
+"$here/fingerprint.sh" --empty . && exit 0
+sum=$("$here/fingerprint.sh" .) &&
   printf '%s' "$sum" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || sum=unknown
 # Without a data folder it can write, the stop cannot be refused once per fingerprint: it goes
 # through rather than refuse forever (review R5).

@@ -8,6 +8,14 @@
 # outside the checkout, or to an ignored file, leaves it as it was. It prints the 64 hex digits,
 # or nothing and exits 1: outside a git repository, before the first commit, or after 5 s (when
 # perl is there to time it). Nothing of the repository leaves the machine but the hash.
+# With --empty first, it prints nothing and exits 0 only when the checkout has nothing to check:
+# no diff from `git merge-base HEAD origin/HEAD` and no untracked file git does not ignore
+# (DR-0028.D1, amended); a difference, a git error or the 5 s exits 1, so a stop.sh that cannot
+# tell refuses. It has no HEAD fallback: with no origin/HEAD (a remote never fetched since it was
+# added, or no remote), or when git finds no merge base (a shallow clone, unrelated histories), HEAD
+# as the base would hide committed work, so it exits 1 (review R1, R2). The fingerprint keeps its
+# HEAD fallback, unchanged: it is compared byte for byte with the session's start and the server's
+# check hash.
 set -u
 if [ "${1:-}" = --timed ]; then
   shift
@@ -16,8 +24,21 @@ elif command -v perl >/dev/null 2>&1; then
   exec perl -e 'setpgrp(0, 0); $SIG{ALRM} = sub { kill "KILL", -$$ }; alarm shift;
     exit(system(@ARGV) >> 8)' 5 /bin/sh "$0" --timed "$@"
 fi
+empty=
+if [ "${1:-}" = --empty ]; then
+  empty=1
+  shift
+fi
 cd "${1:-.}" 2>/dev/null || exit 1
 top=$(git rev-parse --show-toplevel 2>/dev/null) && cd "$top" || exit 1
+if [ -n "$empty" ]; then
+  base=$(git merge-base HEAD origin/HEAD 2>/dev/null) && [ -n "$base" ] || exit 1
+  # git diff --quiet exits 1 on a difference and above 1 on an error: both count as a change.
+  git diff --quiet --no-ext-diff --no-textconv "$base" 2>/dev/null || exit 1
+  untracked=$(git ls-files --others --exclude-standard 2>/dev/null) || exit 1
+  [ -z "$untracked" ] || exit 1
+  exit 0
+fi
 base=$(git merge-base HEAD origin/HEAD 2>/dev/null || git rev-parse --verify -q HEAD) || exit 1
 state=$(mktemp) || exit 1
 trap 'rm -f "$state"' EXIT
