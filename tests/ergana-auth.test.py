@@ -1062,6 +1062,15 @@ class FileStoreTest(Base):
         self.assertIn("origin", r.stderr)
         self.assertEqual(self.server.requests, [])
 
+    def test_f3_test_mode_never_production(self):
+        # H2: a test never reaches production, with no ERGANA_ORIGIN or with one on app.ergana.ai
+        for o in ("", "https://app.ergana.ai", "https://APP.ergana.ai:443", "https://app.ergana.ai."):
+            for cmd in (["header", "acme", "5"], ["header", "-", "5"], ["only"], ["login", "--workspace", "acme"]):
+                r = self.run_auth(cmd, env={"ERGANA_ORIGIN": o})
+                self.assertNotEqual(r.returncode, 0, (o, cmd))
+                self.assertIn("never production", r.stderr, (o, cmd))
+                self.assertEqual(r.stdout, "", (o, cmd))
+
     def test_f3_stored_origin_scheme_must_match(self):
         https = "https://" + self.server.host
         self.put(origin=self.server.origin, expires_in=3600)

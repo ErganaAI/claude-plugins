@@ -33,6 +33,12 @@ case "$dir" in '' | *'${'*) dir=${CLAUDE_PROJECT_DIR:-$PWD} ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
 # git_ (each call cut off after about a second), and the .ergana lookup.
 . "$here/ergana-repo.sh"
+# A test never reaches production: with ERGANA_AUTH_TEST=1 and no test ERGANA_ORIGIN, the not-connected
+# bearer alone, so no token, no repository header and never the shared sign-in go to app.ergana.ai.
+if test_off_prod; then
+  printf '{"Authorization":"Bearer ergana-not-connected"}\n'
+  exit 0
+fi
 
 # budget_left: $left, the whole seconds left of the 7 s (the clock counts whole seconds: one is held back), 0
 # when there is no clock.

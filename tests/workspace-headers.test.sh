@@ -9,7 +9,8 @@ trap 'rm -rf "$tmp"' EXIT
 failed=0
 # The helper reads ~/.config/ergana (the index, the stored tokens): a throwaway HOME, no real Keychain.
 export HOME="$tmp/home" ERGANA_AUTH_TEST=1 ERGANA_AUTH_KEYCHAIN=0 GIT_CONFIG_GLOBAL=/dev/null
-unset ERGANA_ORIGIN
+# a test origin that never resolves (.test is reserved): test mode refuses production (no ERGANA_ORIGIN)
+export ERGANA_ORIGIN=https://ergana.test
 mkdir "$HOME"
 # a HOME with no workspace: the no-.ergana cases that predate DR-0055.D1 run in it
 empty="$tmp/empty"
@@ -151,10 +152,10 @@ done
 # never the shared sign-in. A committed .ergana applies like a local one, with no confirmation.
 cfg="$HOME/.config/ergana"
 putsecret() { # <slug>: a valid token TOK-<slug> for the production host, listed in the index
-  mkdir -p "$cfg/app.ergana.ai"
-  printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://app.ergana.ai"}' "$1" "$(( $(date +%s) + 3600 ))" \
-    >"$cfg/app.ergana.ai/$1"
-  printf 'app.ergana.ai %s\n' "$1" >>"$cfg/workspaces"
+  mkdir -p "$cfg/ergana.test"
+  printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://ergana.test"}' "$1" "$(( $(date +%s) + 3600 ))" \
+    >"$cfg/ergana.test/$1"
+  printf 'ergana.test %s\n' "$1" >>"$cfg/workspaces"
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -209,8 +210,8 @@ has dangling-symlink "$out" '"Authorization":"Bearer ergana-not-connected"'
 hasnt dangling-symlink "$out" 'X-Ergana-Workspace'
 # a committed .ergana with one workspace on the machine needs no confirmation
 mkdir -p "$tmp/home1/.config/ergana"
-cp -R "$cfg/app.ergana.ai" "$tmp/home1/.config/ergana/"
-printf 'app.ergana.ai acme\n' >"$tmp/home1/.config/ergana/workspaces"
+cp -R "$cfg/ergana.test" "$tmp/home1/.config/ergana/"
+printf 'ergana.test acme\n' >"$tmp/home1/.config/ergana/workspaces"
 mk "$tmp/com1"
 printf 'workspace = acme\n' >"$tmp/com1/.ergana"
 git -C "$tmp/com1" add .ergana
@@ -222,8 +223,8 @@ mkdir -p "$tmp/slow/bin" "$tmp/home3/.config/ergana"
 printf '#!/bin/sh\nexec sleep 3\n' >"$tmp/slow/bin/git"
 chmod +x "$tmp/slow/bin/git"
 printf 'workspace = acme\n' >"$tmp/slow/.ergana"
-cp -R "$cfg/app.ergana.ai" "$tmp/home3/.config/ergana/"
-printf 'app.ergana.ai acme\n' >"$tmp/home3/.config/ergana/workspaces"
+cp -R "$cfg/ergana.test" "$tmp/home3/.config/ergana/"
+printf 'ergana.test acme\n' >"$tmp/home3/.config/ergana/workspaces"
 t0=$(date +%s)
 out=$(PATH="$tmp/slow/bin:$PATH" HOME="$tmp/home3" "$helper" "$tmp/slow")
 t1=$(date +%s)
@@ -373,9 +374,9 @@ norepo() { # <name> <json>: no repository header, the not-connected bearer
 }
 # two workspaces are connected here, none of them acme: a committed .ergana naming acme has no token
 mkdir -p "$tmp/home4/.config/ergana"
-cp -R "$cfg/app.ergana.ai" "$tmp/home4/.config/ergana/"
-rm "$tmp/home4/.config/ergana/app.ergana.ai/acme"
-printf 'app.ergana.ai second\napp.ergana.ai third\n' >"$tmp/home4/.config/ergana/workspaces"
+cp -R "$cfg/ergana.test" "$tmp/home4/.config/ergana/"
+rm "$tmp/home4/.config/ergana/ergana.test/acme"
+printf 'ergana.test second\nergana.test third\n' >"$tmp/home4/.config/ergana/workspaces"
 mko "$tmp/r-unc"
 printf 'workspace = acme\n' >"$tmp/r-unc/.ergana"
 git -C "$tmp/r-unc" add .ergana
@@ -422,17 +423,17 @@ out=$(HOME="$empty" "$helper" "$tmp/r-none")
 for hd in X-Ergana-Repo X-Ergana-Branch X-Ergana-Root-Hash; do has "no-ergana-repo $hd" "$out" "$hd"; done
 # DR-0055.D1: no .ergana, the machine's workspaces for the production host decide.
 # a throwaway HOME per case: <name> <slug with a token>... ; the slugs listed without a token follow "--"
-nohome() { # <name> <index lines...>: HOME with the index, tokens for the slugs of app.ergana.ai lines marked +
+nohome() { # <name> <index lines...>: HOME with the index, tokens for the slugs of ergana.test lines marked +
   h="$tmp/nh-$1"; shift
-  mkdir -p "$h/.config/ergana/app.ergana.ai"
+  mkdir -p "$h/.config/ergana/ergana.test"
   : >"$h/.config/ergana/workspaces"
   for l in "$@"; do
     case "$l" in
-      +*) printf 'app.ergana.ai %s\n' "${l#+}" >>"$h/.config/ergana/workspaces"
-        printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://app.ergana.ai"}' "${l#+}" "$(( $(date +%s) + 3600 ))" \
-          >"$h/.config/ergana/app.ergana.ai/${l#+}" ;;
+      +*) printf 'ergana.test %s\n' "${l#+}" >>"$h/.config/ergana/workspaces"
+        printf '{"access":"TOK-%s","refresh":"r","expires_at":%s,"origin":"https://ergana.test"}' "${l#+}" "$(( $(date +%s) + 3600 ))" \
+          >"$h/.config/ergana/ergana.test/${l#+}" ;;
       *' '*) printf '%s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
-      *) printf 'app.ergana.ai %s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
+      *) printf 'ergana.test %s\n' "$l" >>"$h/.config/ergana/workspaces" ;;
     esac
   done
 }
@@ -477,4 +478,9 @@ putsecret late
 out=$("$helper" "$tmp/s31")
 has s31-after "$out" '"Authorization":"Bearer TOK-late"'
 has s31-after "$out" '"X-Ergana-Repo":'
+# H2: a test never reaches production: ERGANA_AUTH_TEST=1 with no ERGANA_ORIGIN, or one on app.ergana.ai, sends
+# the not-connected bearer alone, never a token, the repository or the shared sign-in.
+for o in '' https://app.ergana.ai HTTPS://App.Ergana.AI:443 https://app.ergana.ai.; do
+  expect "test-mode-no-prod-$o" "$(ERGANA_ORIGIN=$o "$helper" "$tmp/s31")" '{"Authorization":"Bearer ergana-not-connected"}'
+done
 exit $failed

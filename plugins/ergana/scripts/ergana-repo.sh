@@ -1,10 +1,19 @@
 #!/bin/sh
-# Sourced by workspace-headers.sh and session-context.sh: the repository's .ergana file (DR-0035.D1),
+# Sourced by workspace-headers.sh, session-context.sh and inbox.sh: the repository's .ergana file (DR-0035.D1),
 # and whether git tracks it (DR-0051.D1: it applies like a local one, with no confirmation). The caller sets
 # $dir (the session's folder) and, for the root, $top (git's top level, or empty); everything is silent
 # and every git call is cut off after about a second when perl is there to time it.
 
 # gitc <folder> <git args>
+# test_off_prod: true when ERGANA_AUTH_TEST=1 has no test origin to call (no ERGANA_ORIGIN, or one on
+# app.ergana.ai): a test never reaches production, as in ergana-auth.py and ergana-hook.py.
+test_off_prod() {
+  [ "${ERGANA_AUTH_TEST:-}" = 1 ] || return 1
+  o=$(printf '%s' "${ERGANA_ORIGIN:-}" | tr 'A-Z' 'a-z')
+  case "$o" in '' | *://app.ergana.ai | *://app.ergana.ai. | *://app.ergana.ai[.:/]*) return 0 ;; esac
+  return 1
+}
+
 gitc() {
   d=$1
   shift

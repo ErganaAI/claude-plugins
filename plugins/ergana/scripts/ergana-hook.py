@@ -17,7 +17,8 @@ One monotonic deadline covers the whole process: start + timeout - 1 s. The head
 is never cut short (it ends within about 8 s by itself, DR-0056.D1); the socket timeout and a SIGALRM watchdog
 (armed after the helper, so it cannot kill a renewal) both use what is left. Every redirect is refused, so
 the token never follows a Location. Python 3.9, standard library only. The origin is https://app.ergana.ai;
-ERGANA_ORIGIN is read only with ERGANA_AUTH_TEST=1, as in inbox.sh.
+ERGANA_ORIGIN is read only with ERGANA_AUTH_TEST=1, which never reaches production: without a test
+ERGANA_ORIGIN (none, invalid, or on app.ergana.ai) the hook fails before anything is sent.
 
 Exit 0 with the text on stdout, or exit 1 with one line on stderr (at most 300 characters): the tool's own
 error text, the error_description of a JSON error body, or a fixed line saying the cause (English, or French
@@ -61,12 +62,15 @@ def fail(line):
 
 
 def origin():
-    o = os.environ.get("ERGANA_ORIGIN", "") if os.environ.get("ERGANA_AUTH_TEST") == "1" else ""
-    o = (o or PROD_ORIGIN).rstrip("/")
-    m = re.match(r"^(https?)://([A-Za-z0-9.-]+)(:[0-9]{1,5})?$", o)
-    # outside the tests the origin is PROD_ORIGIN; in them, http only for the loopback
-    if not m or (m.group(1) == "http" and m.group(2) not in ("127.0.0.1", "localhost")):
+    if os.environ.get("ERGANA_AUTH_TEST") != "1":
         return PROD_ORIGIN
+    # a test never reaches production: ERGANA_ORIGIN must name a test server, http only for the loopback
+    o = os.environ.get("ERGANA_ORIGIN", "").rstrip("/")
+    m = re.match(r"^(https?)://([A-Za-z0-9.-]+)(:[0-9]{1,5})?$", o)
+    if not m or (m.group(1) == "http" and m.group(2) not in ("127.0.0.1", "localhost")) \
+            or m.group(2).lower().rstrip(".") == "app.ergana.ai":
+        fail(t("Ergana › mode test : jamais la production, ERGANA_ORIGIN doit nommer un serveur de test",
+               "Ergana › test mode: never production, ERGANA_ORIGIN must name a test server"))
     return o
 
 
@@ -111,6 +115,8 @@ def main():
     except (OSError, ValueError, KeyError):
         version = "0"
 
+    url = origin() + "/mcp"  # before the helper: a test fails here, before any token is read
+
     # The headers, fresh: the helper's own budget ends it, so it is never killed before the deadline.
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or hook.get("cwd")
     if not isinstance(cwd, str) or not cwd:
@@ -132,7 +138,7 @@ def main():
         fail(t("Ergana › serveur trop lent", "Ergana › server too slow"))
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": tool, "arguments": arguments}}).encode()
-    req = urllib.request.Request(origin() + "/mcp", data=body, headers=headers, method="POST")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     del headers
     signal.signal(signal.SIGALRM, on_alarm)
     signal.setitimer(signal.ITIMER_REAL, left)

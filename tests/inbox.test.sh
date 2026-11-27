@@ -57,6 +57,15 @@ case $(cat "$STUB/argv") in *"$KEY"*) echo "FAIL key-in-argv"; failed=1 ;; *) ec
 case $(cat "$STUB/argv") in *" -H @"*"/s1.hdr "*) echo "ok   header-file" ;; *) echo "FAIL header-file: $(cat "$STUB/argv")"; failed=1 ;; esac
 case $err$out in *"$KEY"*) echo "FAIL key-printed"; failed=1 ;; *) echo "ok   key-not-printed" ;; esac
 
+# H2: a test never reaches production: ERGANA_AUTH_TEST=1 with no ERGANA_ORIGIN, or one on app.ergana.ai,
+# exits at once without calling curl; a test origin is the one called.
+for o in '' https://app.ergana.ai https://APP.ergana.ai:443/; do
+  ERGANA_AUTH_TEST=1 ERGANA_ORIGIN=$o run s1 '200 x'
+  expect "test-mode-no-prod-$o" "$rc:$(wc -l <"$STUB/argv" | tr -d ' ')" 0:0
+done
+ERGANA_AUTH_TEST=1 ERGANA_ORIGIN=https://ergana.test/ run s1 '200 x'
+case $(cat "$STUB/argv") in *"https://ergana.test/v1/relay/listen"*) echo "ok   test-origin-url" ;; *) echo "FAIL test-origin-url"; failed=1 ;; esac
+
 # The header file holds the key, mode 0600, while the listener runs: a stub that looks at it.
 cp "$tmp/bin/curl" "$tmp/bin/curl.real"
 cat >"$tmp/bin/curl" <<'STUB'
