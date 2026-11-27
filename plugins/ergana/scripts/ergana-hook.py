@@ -54,7 +54,9 @@ def t(french, english):
 
 
 def fail(line):
-    sys.stderr.write(" ".join(str(line).split())[:300] + "\n")
+    # one line, no control character (a server-worded text could hold an escape sequence)
+    line = "".join(c for c in " ".join(str(line).split()) if c.isprintable())
+    sys.stderr.write(line[:300] + "\n")
     sys.exit(1)
 
 
@@ -110,7 +112,9 @@ def main():
         version = "0"
 
     # The headers, fresh: the helper's own budget ends it, so it is never killed before the deadline.
-    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or hook.get("cwd") or os.getcwd()
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or hook.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
     try:
         r = subprocess.run(["/bin/sh", os.path.join(here, "workspace-headers.sh"), cwd], capture_output=True,
                            text=True, timeout=max(deadline - time.monotonic(), 0.1))
@@ -171,14 +175,18 @@ def main():
             fail(t("Ergana › connexion refusée : /ergana:login", "Ergana › sign-in refused: /ergana:login"))
         fail("Ergana › HTTP %d" % status)
     res = data.get("result") if isinstance(data, dict) else None
+    err = data.get("error") if isinstance(data, dict) else None
+    if res is None and isinstance(err, dict) and isinstance(err.get("message"), str) and err["message"].strip():
+        fail("Ergana › " + err["message"])  # a JSON-RPC error: the server's own message
     items = res.get("content") if isinstance(res, dict) else None
-    if not isinstance(items, list) or not isinstance(res.get("isError"), bool):
+    # isError is optional in MCP, false by default
+    if not isinstance(items, list) or not isinstance(res.get("isError", False), bool):
         fail(unreadable)
     text = "\n".join(i["text"] for i in items if isinstance(i, dict) and i.get("type") == "text"
                      and isinstance(i.get("text"), str))
-    if res["isError"]:
+    if res.get("isError", False):
         fail(text or unreadable)
-    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.buffer.write(text.encode("utf-8", "replace"))
     return 0
 
 

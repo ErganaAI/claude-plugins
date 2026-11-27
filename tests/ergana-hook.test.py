@@ -264,6 +264,24 @@ srv.mcp = (200, ok_body("y" * (1024 * 1024 + 10)), [])
 p, _ = run(srv.origin, r, EDIT)
 check("over-1mb", p.returncode == 1 and p.stderr.strip() == "Ergana › unreadable answer" and p.stdout == "", (p.stderr[:80], len(p.stdout)))
 
+# review L1-L4: isError is optional (MCP: false by default); a JSON-RPC error says its message; a lone
+# surrogate or a non-string cwd gives no traceback; control characters never reach the line shown
+srv.mcp = (200, json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "{}"}]}}).encode(), [])
+p, _ = run(srv.origin, r, EDIT)
+check("is-error-optional", p.returncode == 0 and p.stdout == "{}", (p.stdout, p.stderr))
+srv.mcp = json_reply(200, {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Invalid params: file_path"}})
+p, _ = run(srv.origin, r, EDIT)
+check("rpc-error", p.returncode == 1 and p.stderr.strip() == "Ergana › Invalid params: file_path", p.stderr)
+srv.mcp = (200, b'{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"a\\ud800b"}],"isError":false}}', [])
+p, _ = run(srv.origin, r, EDIT)
+check("lone-surrogate", p.returncode == 0 and "Traceback" not in p.stderr, p.stderr[-200:])
+srv.mcp = (200, ok_body("{}"), [])
+p, _ = run(srv.origin, r, EDIT, hook={"session_id": "s1", "cwd": 7}, extra_env={"CLAUDE_PROJECT_DIR": ""})
+check("cwd-not-a-string", "Traceback" not in p.stderr, p.stderr[-200:])
+srv.mcp = (200, ok_body("bad\x1b[31m red\x07", True), [])
+p, _ = run(srv.origin, r, EDIT)
+check("no-control-chars", p.returncode == 1 and p.stderr.strip() == "bad[31m red", repr(p.stderr))
+
 # 9 the token never leaks; a redirect is not followed
 other = Fake()
 other.mcp = (200, ok_body(), [])
