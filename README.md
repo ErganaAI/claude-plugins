@@ -64,6 +64,10 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
   request to Ergana with a key that is made once per session in the plugin's data folder (`inbox/`, mode 0600); when
   another agent writes to your person, it wakes the session so it reads the message. Snooze through Ergana to stop it.
 - Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
+- Every hook that calls Ergana (the rules before an edit, the done gate, the session's live state) runs
+  `scripts/ergana-hook.py`, which takes the headers fresh from `scripts/workspace-headers.sh` on each call, so it renews
+  the sign-in itself, from 0.19.8: before, these hooks reused the session's connection and failed with `invalid_token`
+  an hour into a session. A failing hook says why in one line, never Ergana's raw answer.
 
 ## What a session sends
 
