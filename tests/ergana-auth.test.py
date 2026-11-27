@@ -530,6 +530,7 @@ class LoginTest(Base):
         repo = self.repo()
         self.put()
         r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
+        self.assert_clean(r)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "L'espace acme est déjà connecté.\n")
         self.assertFalse(os.path.exists(self.open_log))
@@ -537,15 +538,18 @@ class LoginTest(Base):
         with open(os.path.join(repo, ".ergana")) as f:
             self.assertEqual(f.read().strip(), "workspace = acme")
         r = self.run_auth(["login"], cwd=repo, env={"LANG": "en_US.UTF-8"})
+        self.assert_clean(r)
         self.assertEqual(r.stdout, "The acme workspace is already connected.\n")
 
     def test_9_connected_exits_3_silently_when_not_connected(self):
         repo = self.repo()
         for args in (["connected"], ["connected", "--workspace", "acme"]):
             r = self.run_auth(args, cwd=repo)
+            self.assert_clean(r)
             self.assertEqual((r.returncode, r.stdout, r.stderr), (3, "", ""))
         self.put(expires_in=30)  # about to expire: login renews it at the browser
         r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo)
+        self.assert_clean(r)
         self.assertEqual(r.returncode, 3)
         self.assertFalse(os.path.exists(os.path.join(repo, ".ergana")))
         self.assertFalse(os.path.exists(self.open_log))
@@ -557,12 +561,13 @@ class LoginTest(Base):
             f.write("workspace = other\n")
         self.put()
         r = self.run_auth(["connected", "--workspace", "acme"], cwd=repo)
+        self.assert_clean(r)
         self.assertNotIn(r.returncode, (0, 3))
         self.assertIn("other", r.stderr)
 
     def test_10_bad_slug_refused_before_any_file(self):
         repo = self.repo()
-        for args in (["login", "--workspace", "../x"], ["logout", "--workspace", "../x"], ["header", "../x", "5"]):
+        for args in (["login", "--workspace", "../x"], ["connected", "--workspace", "../x"], ["logout", "--workspace", "../x"], ["header", "../x", "5"]):
             r = self.run_auth(args, cwd=repo)
             self.assertNotEqual(r.returncode, 0, args)
             self.assertEqual(r.stdout, "")

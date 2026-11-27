@@ -88,7 +88,9 @@ step runs before the repository's other git calls, within one 7 s deadline (Clau
 
 ## One sign-in per workspace
 
-`/ergana:login` opens the machine's default browser at once (OAuth with PKCE, the client `ergana-cli`), with no
+From 0.19.7, `/ergana:login` first checks, with no network, whether the workspace is already connected on this
+machine (`ergana-auth.py connected`): it then links the repository and prints only « L'espace <slug> est déjà
+connecté. », and opens no browser. Otherwise it opens the machine's default browser at once (OAuth with PKCE, the client `ergana-cli`), with no
 question: the account chosen there decides the workspace. The token is kept under that workspace and, when the
 repository has no `.ergana`, one is written (`workspace = <slug>`) at its root and listed in `.git/info/exclude`. When
 the repository's `.ergana`, or the optional argument, names another workspace, the sign-in is refused in one line and
