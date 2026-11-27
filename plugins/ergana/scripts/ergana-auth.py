@@ -25,6 +25,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socketserver
 import signal
@@ -538,14 +539,36 @@ class Callback(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def open_browser(url):
-    exe = shutil.which("open" if sys.platform == "darwin" else "xdg-open")
-    if exe:
+def browser_commands(url):
+    """The commands that may open ``url``, in order: each entry of $BROWSER, then open (macOS) or xdg-open.
+
+    $BROWSER is read as Python's webbrowser reads it: entries separated by os.pathsep, each a command whose "%s"
+    stands for the URL, else the URL is its last argument. VS Code's dev containers set it to a helper that opens
+    the host's browser, where the container has no xdg-open (and VS Code forwards the callback's port).
+    """
+    commands = []
+    for entry in os.environ.get("BROWSER", "").split(os.pathsep):
         try:
-            subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            argv = shlex.split(entry)
+        except ValueError:
+            continue
+        if argv:
+            commands.append([a.replace("%s", url) for a in argv] if "%s" in entry else argv + [url])
+    commands.append(["open" if sys.platform == "darwin" else "xdg-open", url])
+    return commands
+
+
+def open_browser(url):
+    """The first command of :func:`browser_commands` that exists and starts; the URL is an argument, never shell."""
+    for argv in browser_commands(url):
+        exe = shutil.which(argv[0])
+        if not exe:
+            continue
+        try:
+            subprocess.Popen([exe] + argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except OSError:
-            pass
+            continue
 
 
 class CallbackServer(HTTPServer):
