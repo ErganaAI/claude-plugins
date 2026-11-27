@@ -13,8 +13,9 @@
 #   hook input, stays here): the server never receives a local path from an agent's call, except what
 #   this script cannot read, which passes untouched and which the server then reduces;
 # - session_id is this session's, from the hook input, whatever the agent typed;
-# - report_step carries this session's relay key (inbox/<session>.key, session-context.sh), the one
-#   inbox.sh listens with, whatever the agent typed; a missing or malformed key file adds none;
+# - report_step carries this session's relay key (inbox/<session>.key, relay-key.sh), the one
+#   inbox.sh listens with, whatever the agent typed; a missing key is created here (a session that
+#   started before the key existed), and a failure to create it adds none;
 # - record_check's base_sha and diff_sha256 are computed here: the base is
 #   `git merge-base HEAD origin/HEAD` (else HEAD), the hash the repository's fingerprint, so a
 #   stop's fingerprint equals its check's when nothing changed.
@@ -130,6 +131,8 @@ if [ "$tool" = check_done ]; then
 fi
 if [ "$tool" = report_step ]; then
   new=$(printf '%s' "$new" | strip relay_key)
+  . "$here/relay-key.sh"
+  relay_key "$session"
   key=$(cat "${CLAUDE_PLUGIN_DATA:-/nonexistent}/inbox/$session.key" 2>/dev/null)
   if printf '%s' "$key" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$'; then
     new=$(printf '%s' "$new" | sed 's/^{/{"relay_key":"'"$key"'",/')

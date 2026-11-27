@@ -11,7 +11,8 @@ block behave as before.
 
 A value starting with `.` is a dotted path into the hook input (a missing one is left out); any other value
 is a literal. session_id comes from the input (none: exit 0, nothing sent) and plugin_version from the
-manifest. No Authorization header (no workspace): exit 0, nothing sent, the token never leaves this process.
+manifest. For session_state only, unattended is a boolean: CLAUDE_CODE_ENTRYPOINT is sdk-cli or ERGANA_UNATTENDED
+is 1 (no environment value is sent). No Authorization header (no workspace): exit 0, nothing sent, the token never leaves this process.
 
 One monotonic deadline covers the whole process: start + timeout - 1 s. The headers helper gets all of it and
 is never cut short (it ends within about 8 s by itself, DR-0056.D1); the socket timeout and a SIGALRM watchdog
@@ -115,6 +116,10 @@ def main():
         v = dig(hook, val[1:]) if val.startswith(".") else val
         if key and v is not None:
             arguments[key] = v
+    if tool == "session_state":
+        # whether nobody is at the terminal: claude -p (sdk-cli) or a launcher's ERGANA_UNATTENDED=1; a boolean only
+        arguments["unattended"] = os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli" \
+            or os.environ.get("ERGANA_UNATTENDED") == "1"
     here = os.path.dirname(os.path.abspath(__file__))
     try:
         with open(os.path.join(here, "..", ".claude-plugin", "plugin.json")) as f:
