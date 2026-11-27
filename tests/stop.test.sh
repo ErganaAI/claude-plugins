@@ -53,6 +53,7 @@ expect no-commit "$(run "$tmp/empty" false)" ""
 fake="$tmp/fake/plugins/ergana/scripts"
 mkdir -p "$fake"
 cp "$script" "$fake/stop.sh"
+cp "$here/plugins/ergana/scripts/texts.sh" "$fake/texts.sh"
 printf '#!/bin/sh\nexit 1\n' >"$fake/fingerprint.sh"
 chmod +x "$fake"/*.sh
 got=$(printf '{"session_id":"s1","cwd":"%s","stop_hook_active":false}' "$repo" | LANG=en_US.UTF-8 sh "$fake/stop.sh")

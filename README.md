@@ -128,6 +128,11 @@ A committed `.ergana` applies like a local one, with no confirmation (DR-0051.D1
 workspace and where the link comes from, and offers `/ergana:login` for a `.ergana` with no token; in a repository with no `.ergana` it asks « Se connecter à Ergana ? » (or "Sign in to
 Ergana?"), whatever the machine holds; « Plus tard » is remembered in `.git/info/ergana-later`.
 
+Every line the scripts show is written in English and in French in one catalogue, from 0.19.10: `scripts/texts.py`
+for the Python scripts (loaded by its path, as they run under `python3 -I`) and `scripts/texts.sh` for the shell ones
+(`say <key> [value…]`), the language taken from `LANG` (DR-0029.D1), since these lines come before or without a
+sign-in. `tests/texts.test.py` checks both languages for every key and fails on French anywhere else in the plugin.
+
 ## Tests
 
 No test reaches production (`app.ergana.ai`), from 0.19.9. `ERGANA_AUTH_TEST=1` is the one test switch, honoured

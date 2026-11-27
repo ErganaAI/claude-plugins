@@ -36,6 +36,7 @@ relay_key
 
 cwd=$(printf '%s' "$input" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/texts.sh"
 
 # The repository's workspace and its source, and the sign-in offer.
 workspace_lines() {
@@ -44,10 +45,7 @@ workspace_lines() {
   dir=$cwd
   top=$(git_ rev-parse --show-toplevel)
   ergana_find
-  case "${LANG:-}" in
-    fr*) fr=1; later="Plus tard" ;;
-    *) fr=0; later=Later ;;
-  esac
+  later=$(say later)
   idx=$(ergana_index)
   marker=$(git_ rev-parse --path-format=absolute --git-path info/ergana-later)
   offer=1
@@ -57,19 +55,22 @@ workspace_lines() {
   [ -n "$ergana" ] && slug=$(ergana_slug "$ergana")
   if [ -n "$slug" ]; then
     if [ "$tracked" = 1 ]; then
-      if [ "$fr" = 1 ]; then src="fichier .ergana committé"; else src="committed .ergana file"; fi
+      src=$(say committed)
     else
-      if [ "$fr" = 1 ]; then src="fichier .ergana local"; else src="local .ergana file"; fi
+      src=$(say local)
     fi
-    if [ "$fr" = 1 ]; then echo "Espace Ergana : $slug ($src)"; else echo "Ergana workspace: $slug ($src)"; fi
+    say workspace "$slug" "$src"
+    echo
     if [ "$offer" = 1 ] && ! grep -q " $slug\$" "$idx" 2>/dev/null; then
       echo "The $slug workspace has no sign-in on this machine. Ask the person with AskUserQuestion whether to sign in now, with the options \"$slug\" and \"$later\". On \"$slug\", start the /ergana:login skill for it. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
     fi
   elif [ -z "$ergana" ] && [ -n "$top" ] && only=$(python3 -I "$auth" only 2>/dev/null) && [ -n "$only" ]; then
     # DR-0057.D1: the machine's one workspace is named instead of the sign-in offer.
-    if [ "$fr" = 1 ]; then echo "Espace Ergana : $only (seul espace connecté sur cette machine)"; else echo "Ergana workspace: $only (only workspace signed in on this machine)"; fi
+    say only "$only"
+    echo
   elif [ -z "$ergana" ] && [ "$offer" = 1 ] && [ -n "$top" ]; then
-    if [ "$fr" = 1 ]; then q="Se connecter à Ergana ?"; go="Se connecter"; else q="Sign in to Ergana?"; go="Sign in"; fi
+    q=$(say sign_in_question)
+    go=$(say sign_in)
     echo "This repository has no .ergana file. Ask the person with AskUserQuestion this exact question: \"$q\", with exactly two options, \"$go\" first and \"$later\" second. On \"$go\", start the /ergana:login skill with no argument. On \"$later\", run: python3 -I \"$auth\" later (the offer is not repeated in this repository)."
   fi
 }

@@ -35,9 +35,7 @@ if printf '%s' "$input" | grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*t
 fi
 find "$data/refused" -type f -mtime +30 -exec rm -f {} + 2>/dev/null
 printf '%s\n' "$sum" >"$data/refused/$session" 2>/dev/null || exit 0
-case ${LANG:-} in
-  fr*) line='Ergana › Vérification du changement avant de terminer.' ;;
-  *) line='Ergana › Checking the change before finishing.' ;;
-esac
+. "$here/texts.sh"
+line=$(say stop_checking)
 printf '{"decision":"block","reason":"%s"}\n' "$line"
 exit 0
