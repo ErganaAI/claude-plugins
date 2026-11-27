@@ -71,6 +71,9 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
   `unattended`, from 0.19.11). Any launcher of unattended interactive sessions sets it, for example an Orca worker's
   settings `env`; `claude -p` is detected by itself (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`). Only that yes or no is sent,
   never an environment value.
+- When the agent asks you a question in Claude Code, the hook before it sends the question and its options (their text
+  only, never your answer), from 0.19.14, so the session's page on Ergana shows what it waits for. Ergana erases it as
+  soon as the session works again.
 - Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
 - Every hook that calls Ergana (the rules before an edit, the done gate, the session's live state) runs
   `scripts/ergana-hook.py`, which takes the headers fresh from `scripts/workspace-headers.sh` on each call, so it renews

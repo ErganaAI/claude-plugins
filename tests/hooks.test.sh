@@ -6,12 +6,12 @@
 here=$(cd "$(dirname "$0")/.." && pwd)
 python3 - "$here/plugins/ergana/hooks/hooks.json" <<'PY'
 import json, shlex, sys
-allowed = {"agent_type", "file_path", "state", "name", "background_tasks"}
+allowed = {"agent_type", "file_path", "state", "name", "background_tasks", "questions"}
 tools = {"before_edit", "session_state", "check_done"}
 # today's calls: (event, matcher) -> (tool, timeout, {field: literal, or a dotted path into the hook input})
 expected = {
     ("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit"): ("before_edit", 30, {"agent_type": ".agent_type", "file_path": ".tool_input.file_path"}),
-    ("PreToolUse", "AskUserQuestion"): ("session_state", 10, {"state": "waiting"}),
+    ("PreToolUse", "AskUserQuestion"): ("session_state", 10, {"state": "waiting", "questions": ".tool_input.questions"}),
     ("Stop", None): ("check_done", 30, {"background_tasks": ".background_tasks"}),
     ("PostToolUse", "AskUserQuestion"): ("session_state", 10, {"state": "working"}),
     ("Notification", "permission_prompt"): ("session_state", 10, {"state": "waiting"}),
