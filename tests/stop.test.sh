@@ -106,4 +106,19 @@ for call in --quiet ls-files; do
   got=$(printf '{"session_id":"s1","cwd":"%s","stop_hook_active":false}' "$clone" | PATH="$tmp/bin:$PATH" LANG=en_US.UTF-8 sh "$script")
   expect "git-fails-on-$call" "$got" "$en"
 done
+# No real merge base with origin/HEAD: the empty test cannot tell committed work from none, so the stop
+# is refused as before, fail closed (review R1, R2).
+alone="$tmp/alone"
+git init -q -b main "$alone" && printf 'a\n' >"$alone/app.py" && git -C "$alone" add . &&
+  git -C "$alone" commit -qm one
+reset
+expect no-remote-clean "$(run "$alone" false)" "$en"
+nohead="$tmp/nohead"
+git clone -q "$origin" "$nohead" && git -C "$nohead" remote set-head origin -d
+reset
+expect no-origin-head-clean-at-origins-commit "$(run "$nohead" false)" "$en"
+git -C "$nohead" switch -q -c feature
+printf 'b\n' >>"$nohead/app.py" && git -C "$nohead" commit -qam agent
+reset
+expect no-origin-head-committed-on-a-branch "$(run "$nohead" false)" "$en"
 exit $failed

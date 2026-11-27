@@ -97,4 +97,24 @@ changed "--empty: untracked, from a subfolder" "$clone/sub"
 rm "$clone/notes.md"
 changed "--empty: outside git" "$tmp/plain"
 changed "--empty: no commit" "$tmp/empty"
+# Without a real merge base with origin/HEAD, --empty cannot tell committed work from none: a change
+# (review R1, R2). The fingerprint itself keeps its HEAD fallback, byte for byte.
+changed "--empty: no remote, clean" "$repo"
+nohead="$tmp/nohead"
+git clone -q "$repo" "$nohead"
+withhead=$("$fp" "$nohead")
+git -C "$nohead" remote set-head origin -d
+if git -C "$nohead" rev-parse -q --verify refs/remotes/origin/HEAD >/dev/null; then
+  echo "FAIL setup: origin/HEAD still there"; failed=1
+fi
+same "no origin/HEAD: the base falls back on HEAD" "$withhead" "$("$fp" "$nohead")"
+changed "--empty: no origin/HEAD, clean at origin's commit" "$nohead"
+git -C "$nohead" switch -q -c feature
+printf 'print(6)\n' >"$nohead/app.py" && git -C "$nohead" commit -qam six
+changed "--empty: no origin/HEAD, committed on a branch" "$nohead"
+related=$("$fp" "$clone")
+unrelated=$(git -C "$clone" commit-tree "$(git -C "$clone" mktree </dev/null)" -m unrelated)
+git -C "$clone" update-ref refs/remotes/origin/HEAD "$unrelated"
+same "no merge base: the base falls back on HEAD" "$related" "$("$fp" "$clone")"
+changed "--empty: no merge base with origin/HEAD" "$clone"
 exit $failed

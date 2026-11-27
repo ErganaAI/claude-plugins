@@ -1,13 +1,13 @@
 #!/bin/sh
 # Stop: the done gate's local half (DR-0028.D1). The stop goes through when the git checkout holding
-# the session's folder has nothing to check (fingerprint.sh --empty: no diff from its base and no
-# untracked file git does not ignore, so the rules check would judge nothing, whatever the session's
-# start was; DR-0028.D1 amended), is as it was at the session's start (start/<session>,
-# session-context.sh), or is as the last check the server cleared left it (cleared/<session>,
-# cleared.sh). Otherwise it is refused once per fingerprint (DR-0033.D1): a continued stop passes
-# only while the repository is exactly the one refused (refused/<session>); the agent's check_done
-# then gates. Outside a git checkout, or in one with no commit, nothing is gated (DR-0032.D1), nor
-# while the check agent runs.
+# the session's folder has nothing to check (fingerprint.sh --empty: a merge base with origin/HEAD,
+# no diff from it and no untracked file git does not ignore, so the rules check would judge nothing,
+# whatever the session's start was; DR-0028.D1 amended), is as it was at the session's start
+# (start/<session>, session-context.sh), or is as the last check the server cleared left it
+# (cleared/<session>, cleared.sh). Otherwise it is refused once per fingerprint (DR-0033.D1): a
+# continued stop passes only while the repository is exactly the one refused (refused/<session>); the
+# agent's check_done then gates. Outside a git checkout, or in one with no commit, nothing is gated
+# (DR-0032.D1), nor while the check agent runs.
 # A fingerprint that cannot be computed is "unknown": changed, fail closed. No jq: the hook input is
 # matched as text. The line follows LANG only (DR-0029.D1).
 input=$(cat)
