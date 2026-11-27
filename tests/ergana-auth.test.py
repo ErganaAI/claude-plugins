@@ -83,6 +83,17 @@ except Exception:
     pass
 '''
 
+# A browser that $BROWSER names (VS Code's dev containers set it to a helper that opens the host's browser): it
+# logs "browser" and its arguments, then follows the URL among them like FAKE_OPEN.
+FAKE_BROWSER = r'''#!/usr/bin/env python3
+import os, sys, urllib.request
+open(os.environ["OPEN_LOG"], "a").write("browser " + " ".join(sys.argv[1:]) + "\n")
+try:
+    urllib.request.urlopen([a for a in sys.argv[1:] if a.startswith("http")][0], timeout=10).read()
+except Exception:
+    pass
+'''
+
 
 def s256(verifier):
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -218,7 +229,9 @@ class Base(unittest.TestCase):
         self.secdir = os.path.join(self.tmp, "sec")
         for d in (self.home, self.bin, self.secdir):
             os.mkdir(d)
-        for name, body in (("security", FAKE_SECURITY), ("open", FAKE_OPEN), ("xdg-open", FAKE_OPEN)):
+        for name, body in (
+            ("security", FAKE_SECURITY), ("open", FAKE_OPEN), ("xdg-open", FAKE_OPEN), ("host-browser", FAKE_BROWSER)
+        ):
             p = os.path.join(self.bin, name)
             with open(p, "w") as f:
                 f.write(body)
@@ -238,6 +251,7 @@ class Base(unittest.TestCase):
             "GIT_CONFIG_NOSYSTEM": "1",
         }
         os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        os.environ.pop("BROWSER", None)  # the dev container's own: each test names the browser it wants
         os.environ.update(self.env)
 
     def tearDown(self):
@@ -343,6 +357,34 @@ class LoginTest(Base):
         self.mod.delete_secret("acme")
         r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"LANG": "fr_FR.UTF-8"})
         self.assertEqual(r.stdout.splitlines()[-1], "Les outils d'Ergana fonctionnent dans cette session dès leur prochain appel. Si l'un d'eux dit encore que le serveur n'est pas connecté : dans /mcp, choisir `plugin:ergana:ergana`, puis `Reconnect`.")
+
+    def opened(self):
+        with open(self.open_log) as f:
+            return f.read().splitlines()
+
+    def test_1_browser_env_opens_the_host_browser(self):
+        """$BROWSER first (a dev container has no xdg-open; VS Code's helper opens the host's browser)."""
+        repo = self.repo()
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"BROWSER": "host-browser"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (line,) = self.opened()
+        self.assertTrue(line.startswith("browser " + self.server.origin + "/oauth/authorize?"), line)
+
+    def test_1_browser_env_list_and_placeholder(self):
+        """Python's convention: entries separated by os.pathsep, the first that exists; %s stands for the URL."""
+        repo = self.repo()
+        listed = os.pathsep.join(["no-such-browser", "host-browser --new-tab %s"])
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"BROWSER": listed})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (line,) = self.opened()
+        self.assertTrue(line.startswith("browser --new-tab " + self.server.origin + "/oauth/authorize?"), line)
+
+    def test_1_browser_env_missing_falls_back(self):
+        repo = self.repo()
+        r = self.run_auth(["login", "--workspace", "acme"], cwd=repo, env={"BROWSER": "no-such-browser"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (line,) = self.opened()
+        self.assertTrue(line.startswith(self.server.origin + "/oauth/authorize?"), line)
 
     def test_1_wrong_state_refused(self):
         repo = self.repo()

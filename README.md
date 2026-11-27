@@ -98,6 +98,10 @@ step runs before the repository's other git calls, within one 7 s deadline (Clau
 
 ## One sign-in per workspace
 
+From 0.19.13 the browser is the one `$BROWSER` names when it is set (its entries separated by `:`, `%s` standing for
+the link, as Python reads it), before `open` or `xdg-open`: in a VS Code dev container, which has no `xdg-open`, VS
+Code's helper opens the computer's own browser and forwards the sign-in's local port.
+
 From 0.19.7, `/ergana:login` first checks, with no network, whether the workspace is already connected on this
 machine (`ergana-auth.py connected`): it then links the repository and prints only « L'espace <slug> est déjà
 connecté. », and opens no browser. Otherwise it opens the machine's default browser at once (OAuth with PKCE, the client `ergana-cli`), with no
