@@ -63,10 +63,10 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
 - While a session is idle, a background listener (`scripts/inbox.sh`, started by the Stop hook, one per session) holds a
   request to Ergana with a key that is made once per session in the plugin's data folder (`inbox/`, mode 0600); when
   another agent writes to your person, it wakes the session so it reads the message. Snooze through Ergana to stop it.
-  The key is made at session start, or, from 0.19.10, on the session's next `report_step` when it is missing: a session
+  The key is made at session start, or, from 0.19.11, on the session's next `report_step` when it is missing: a session
   started before 0.19.5 gets its key on its next `report_step` after `/reload-plugins`, and its next stop listens.
 - `ERGANA_UNATTENDED=1` tells Ergana that nobody is at the terminal of a session (the session's live state carries
-  `unattended`, from 0.19.10). Any launcher of unattended interactive sessions sets it, for example an Orca worker's
+  `unattended`, from 0.19.11). Any launcher of unattended interactive sessions sets it, for example an Orca worker's
   settings `env`; `claude -p` is detected by itself (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`). Only that yes or no is sent,
   never an environment value.
 - Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
