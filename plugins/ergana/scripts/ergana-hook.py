@@ -12,7 +12,8 @@ block behave as before.
 A value starting with `.` is a dotted path into the hook input (a missing one is left out); any other value
 is a literal. session_id comes from the input (none: exit 0, nothing sent) and plugin_version from the
 manifest. For session_state only, unattended is a boolean: CLAUDE_CODE_ENTRYPOINT is sdk-cli or ERGANA_UNATTENDED
-is 1 (no environment value is sent). No Authorization header (no workspace): exit 0, nothing sent, the token never leaves this process.
+is 1 (no environment value is sent); app and place are tokens of fixed sets read from the environment (where), and
+host the machine's first name label, on the person's own machine or over SSH only. No Authorization header (no workspace): exit 0, nothing sent, the token never leaves this process.
 
 One monotonic deadline covers the whole process: start + timeout - 1 s. The headers helper gets all of it and
 is never cut short (it ends within about 8 s by itself, DR-0056.D1); the socket timeout and a SIGALRM watchdog
@@ -91,6 +92,37 @@ def dig(obj, path):
     return obj
 
 
+TERMINALS = {"iTerm.app": "iterm", "Apple_Terminal": "terminal", "ghostty": "ghostty",
+             "WarpTerminal": "warp", "WezTerm": "wezterm"}
+
+
+def where(env):
+    """(app, place): the app the session runs in and the kind of machine, each one of a fixed set."""
+    entry = env.get("CLAUDE_CODE_ENTRYPOINT", "")
+    term = env.get("TERM_PROGRAM", "")
+    if entry.startswith("sdk-"):
+        app = "headless"
+    elif entry == "claude-vscode" or term == "vscode":
+        app = "cursor" if env.get("CURSOR_TRACE_ID") else "vscode"
+    elif entry.startswith("claude-desktop"):
+        app = "desktop"
+    elif env.get("TERMINAL_EMULATOR", "").startswith("JetBrains"):
+        app = "jetbrains"
+    else:
+        app = TERMINALS.get(term, "terminal")
+    if env.get("CODESPACES") == "true":
+        place = "codespace"
+    elif env.get("REMOTE_CONTAINERS") == "true" or os.path.exists("/.dockerenv"):
+        place = "devcontainer"
+    elif env.get("WSL_DISTRO_NAME"):
+        place = "wsl"
+    elif env.get("SSH_CONNECTION") or env.get("SSH_TTY"):
+        place = "ssh"
+    else:
+        place = "local"
+    return app, place
+
+
 def on_alarm(*_):
     raise Slow()
 
@@ -120,6 +152,14 @@ def main():
         # whether nobody is at the terminal: claude -p (sdk-cli) or a launcher's ERGANA_UNATTENDED=1; a boolean only
         arguments["unattended"] = os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli" \
             or os.environ.get("ERGANA_UNATTENDED") == "1"
+        # where it runs, so its person finds its window: fixed tokens, never an environment value; the
+        # machine's name only on the person's own machine or over SSH (a container's is random)
+        app, place = where(os.environ)
+        arguments["app"], arguments["place"] = app, place
+        if place in ("local", "ssh"):
+            host = socket.gethostname().split(".", 1)[0]
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}", host):
+                arguments["host"] = host.lower()
     here = os.path.dirname(os.path.abspath(__file__))
     try:
         with open(os.path.join(here, "..", ".claude-plugin", "plugin.json")) as f:

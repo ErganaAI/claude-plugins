@@ -74,6 +74,10 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
 - When the agent asks you a question in Claude Code, the hook before it sends the question and its options (their text
   only, never your answer), from 0.19.14, so the session's page on Ergana shows what it waits for. Ergana erases it as
   soon as the session works again.
+- From 0.19.15, the session's live state also says where it runs, so its page on Ergana names its window: the app
+  (VS Code, Cursor, JetBrains, iTerm, Terminal…) and the kind of machine (your own, a dev container, a codespace, SSH,
+  WSL), as fixed words, never an environment value; on your own machine or over SSH, also the machine's name (its first
+  label, `studio-mac` of `studio-mac.local`).
 - Lines starting with `Ergana ›` tell you what Ergana is doing; nothing to type.
 - Every hook that calls Ergana (the rules before an edit, the done gate, the session's live state) runs
   `scripts/ergana-hook.py`, which takes the headers fresh from `scripts/workspace-headers.sh` on each call, so it renews

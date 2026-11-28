@@ -5,6 +5,7 @@ repository with .ergana and a stored secret:
     python3 tests/ergana-hook.test.py
 """
 import json
+import re
 import os
 import shutil
 import socket
@@ -330,6 +331,28 @@ for name, env, want in (("sdk-cli", {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}, True)
     check("unattended-" + name, a.get("unattended") is want and a.get("state") == "working", a)
 run(srv.origin, r, EDIT, extra_env={"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"})
 check("unattended-before_edit-none", "unattended" not in last(srv)["body"]["params"]["arguments"])
+
+# W: session_state says where the session runs: app and place from fixed sets, the host's first label only on the
+# person's own machine or over SSH; never an environment value; no other tool sends them
+docker = os.path.exists("/.dockerenv")  # a container running the tests is a dev container to the script
+bare = "devcontainer" if docker else "local"
+for name, env, app, place in (
+        ("vscode-devcontainer", {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode", "REMOTE_CONTAINERS": "true"},
+         "vscode", "devcontainer"),
+        ("cursor", {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode", "CURSOR_TRACE_ID": "x"}, "cursor", bare),
+        ("iterm", {"CLAUDE_CODE_ENTRYPOINT": "cli", "TERM_PROGRAM": "iTerm.app"}, "iterm", bare),
+        ("ssh", {"CLAUDE_CODE_ENTRYPOINT": "cli", "TERM_PROGRAM": "tmux", "SSH_CONNECTION": "1 2 3 4"},
+         "terminal", "devcontainer" if docker else "ssh"),
+        ("codespace", {"CLAUDE_CODE_ENTRYPOINT": "cli", "CODESPACES": "true"}, "terminal", "codespace"),
+        ("jetbrains", {"TERMINAL_EMULATOR": "JetBrains-JediTerm"}, "jetbrains", bare),
+        ("headless", {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}, "headless", bare)):
+    run(srv.origin, r, ["state=working"], tool="session_state", extra_env=env)
+    a = last(srv)["body"]["params"]["arguments"]
+    named = place in ("local", "ssh")
+    check("where-" + name, (a.get("app"), a.get("place")) == (app, place)
+          and ("host" in a) == named and (not named or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", a["host"])), a)
+run(srv.origin, r, EDIT, extra_env={"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"})
+check("where-before_edit-none", not {"app", "place", "host"} & set(last(srv)["body"]["params"]["arguments"]))
 
 shutil.rmtree(TMP, ignore_errors=True)
 sys.exit(1 if failed else 0)
