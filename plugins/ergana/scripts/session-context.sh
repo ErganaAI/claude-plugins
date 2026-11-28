@@ -15,6 +15,16 @@ echo "When Ergana refuses your stop, first call Ergana's check_done tool yoursel
 . "$(cd "$(dirname "$0")" && pwd)/relay-key.sh"
 relay_key "$id"
 
+# impeccable, when the company turns it on (impeccable.py): its installer's path for the agent's shell (the review's
+# design pass runs `sh "$ERGANA_IMPECCABLE" install <version>`), then the company's setting read and applied in the
+# background, detached, so the session never waits on it.
+installer="$(cd "$(dirname "$0")" && pwd)/impeccable.sh"
+case "$installer" in
+  *"'"*) ;;
+  *) [ -n "${CLAUDE_ENV_FILE:-}" ] && printf "export ERGANA_IMPECCABLE='%s'\n" "$installer" >>"$CLAUDE_ENV_FILE" ;;
+esac
+(printf '%s' "$input" | nohup python3 -I "${installer%.sh}.py" refresh >/dev/null 2>&1 &) >/dev/null 2>&1
+
 cwd=$(printf '%s' "$input" | sed -n 's/.*[{,]"cwd":"\([^"\\]*\)".*/\1/p')
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/texts.sh"
