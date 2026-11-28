@@ -138,7 +138,8 @@ has later-still-names-workspace "$(ctx "$tmp/notoken" fr_FR.UTF-8)" 'Espace Erga
 # The relay key (inbox/<session>.key): 43 base64url characters, mode 0600, made once and kept, one per
 # session, and the output never shows it. The full PATH: the key needs base64 and od-free tools.
 kd="$tmp/keydata"
-keyrun() { printf '{"session_id":"%s"}' "$1" | CLAUDE_PLUGIN_DATA="$kd" /bin/sh "$script"; }
+# With a data folder, impeccable.py's refresh starts too: ERGANA_AUTH_TEST=1, so it never asks production.
+keyrun() { printf '{"session_id":"%s"}' "$1" | ERGANA_AUTH_TEST=1 CLAUDE_PLUGIN_DATA="$kd" /bin/sh "$script"; }
 kout=$(keyrun abc-1)
 k1=$(cat "$kd/inbox/abc-1.key" 2>/dev/null)
 if printf '%s' "$k1" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$'; then echo "ok   key-43-base64url"; else echo "FAIL key-43-base64url: '$k1'"; failed=1; fi

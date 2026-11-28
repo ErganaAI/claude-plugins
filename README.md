@@ -84,6 +84,27 @@ In the VS Code extension's panel, plugins are managed with `/plugins`.
   the sign-in itself, from 0.19.8: before, these hooks reused the session's connection and failed with `invalid_token`
   an hour into a session. A failing hook says why in one line, never Ergana's raw answer.
 
+## impeccable, when your company turns it on
+
+impeccable (https://impeccable.style, by Paul Bakaus) is a third party's design toolkit. From 0.19.16, when an owner or admin turns
+it on for the company on Ergana's Integrations page, it becomes the design reviewer of `/ergana:review`, and the
+plugin makes it present on each developer's machine, with nothing to do:
+
+- At session start, in the background (`scripts/impeccable.py refresh`), the plugin asks Ergana for the company's
+  setting (`plugin_settings`, cached 10 minutes in the plugin's data folder) and applies it with Claude Code's own
+  commands: `claude plugin marketplace add pbakaus/impeccable` (`#skill-v<version>` when the admin pinned one) and
+  `claude plugin install impeccable@impeccable --scope user`. At the latest version, its marketplace's
+  `extraKnownMarketplaces` entry in `~/.claude/settings.json` gets `"autoUpdate": true`, so Claude Code keeps it up
+  to date. A new pinned version replaces the installed one.
+- It is installed as its author intends, its hooks included, which check the screen files an agent edits. It
+  downloads its own program, fetches a style catalogue from impeccable.style and sends anonymous usage data there
+  (impeccable's own telemetry, which `npx impeccable telemetry off` or `DO_NOT_TRACK=1` stops).
+- Claude Code loads plugins when a session starts: an install applies at the next session, or after
+  `/reload-plugins`, which the review asks for when it needs impeccable at once. It finds the installer as
+  `$ERGANA_IMPECCABLE` (`sh "$ERGANA_IMPECCABLE" install <latest|x.y.z>`).
+- Turned off, the plugin removes the marketplace and the plugin at the next session start, only when it installed
+  them itself (a marker in its data folder). An impeccable installed by hand is never touched, nor replaced.
+
 ## What a session sends
 
 Besides the tool calls, a session sends Ergana:
@@ -172,6 +193,7 @@ sh tests/stop.test.sh
 sh tests/cleared.test.sh
 sh tests/ergana-tools.test.sh
 sh tests/inbox.test.sh
+python3 tests/impeccable.test.py
 ```
 
 ## Testing the hooks by hand
